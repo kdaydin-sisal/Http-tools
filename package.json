@@ -4,13 +4,17 @@
   "private": true,
   "description": "Mac-first HTTP(S) interception and modification toolkit for iOS/Android traffic",
   "type": "module",
+  "main": "dist-electron/electron/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node --enable-source-maps dist/index.js",
     "android:onboard": "node --enable-source-maps dist/bin/android-onboard.js",
     "ios:onboard": "node --enable-source-maps dist/bin/ios-onboard.js",
-    "validate:smoke": "node --enable-source-maps dist/bin/smoke-validate.js"
+    "validate:smoke": "node --enable-source-maps dist/bin/smoke-validate.js",
+    "electron:build": "tsc -p tsconfig.electron.json",
+    "electron:start": "npm run electron:build && electron .",
+    "electron:package": "npm run electron:build && electron-builder"
   },
   "engines": {
     "node": ">=20"
@@ -20,6 +24,24 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "com.httptools.mac",
+    "productName": "HTTP Tools",
+    "files": [
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": "dmg"
+    }
   }
 }
+

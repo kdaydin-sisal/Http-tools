@@ -1,23 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { ensureLocalCa } from "./core/ca-store.js";
-import { ProxyService } from "./core/proxy-service.js";
-import { ApiServer } from "./control-plane/api-server.js";
+import { startAppRuntime } from "./core/app-runtime.js";
 import type { TrafficRule } from "./core/types.js";
 
-const parsePort = (value: string | undefined) => {
-  if (!value) return 8000;
+const parsePort = (value: string | undefined, fallback: number) => {
+  if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) {
     throw new Error(`Invalid port: ${value}`);
-  }
-  return parsed;
-};
-
-const parseApiPort = (value: string | undefined) => {
-  if (!value) return 8001;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) {
-    throw new Error(`Invalid API port: ${value}`);
   }
   return parsed;
 };
@@ -34,44 +23,47 @@ const loadRules = async (rulesFilePath?: string): Promise<TrafficRule[]> => {
 
 const run = async () => {
   const [, , maybeRulesPath] = process.argv;
-  const port = parsePort(process.env.HTTP_TOOLS_PROXY_PORT);
-  const apiPort = parseApiPort(process.env.HTTP_TOOLS_API_PORT);
+  const preferredProxyPort = parsePort(process.env.HTTP_TOOLS_PROXY_PORT, 8000);
+  const preferredApiPort = parsePort(process.env.HTTP_TOOLS_API_PORT, 8001);
+  const manageSystemProxy = process.env.HTTP_TOOLS_MANAGE_SYSTEM_PROXY !== "0";
+  const rules = await loadRules(maybeRulesPath);
 
-  const [ca, rules] = await Promise.all([ensureLocalCa(), loadRules(maybeRulesPath)]);
-
-  const proxy = new ProxyService();
-  proxy.setRules(rules);
-  proxy.onError((error) => {
-    console.error("[proxy-error]", error);
-  });
-  proxy.onRequest((event) => {
-    console.log(`[request] ${event.method} ${event.url} rules=${event.matchedRuleIds.join(",") || "-"}`);
-  });
-  proxy.onResponse((event) => {
-    console.log(`[response] ${event.statusCode} rules=${event.matchedRuleIds.join(",") || "-"}`);
-  });
-
-  await proxy.start({
-    port,
-    caKeyPem: ca.key,
-    caCertPem: ca.cert,
+  const runtime = await startAppRuntime({
+    preferredProxyPort,
+    preferredApiPort,
+    rules,
+    manageSystemProxy,
+    onRequest: (event: any) => {
+      console.log(`[request] ${event.method} ${event.url} rules=${event.matchedRuleIds?.join(",") || "-"}`);
+    },
+    onResponse: (event: any) => {
+      console.log(`[response] ${event.statusCode} rules=${event.matchedRuleIds?.join(",") || "-"}`);
+    },
+    onError: (error) => {
+      console.error("[proxy-error]", error);
+    },
   });
 
-  const apiServer = new ApiServer(proxy, { certPath: ca.certPath, certPem: ca.cert, apiPort });
-  await apiServer.start(apiPort);
-
-  const proxyEnv = proxy.getProxyEnv();
-  console.log(`Proxy listening on :${proxy.getPort()}`);
-  console.log(`Control API listening on :${apiPort}`);
-  console.log(`Set device proxy to host=<your-mac-ip> port=${proxy.getPort()}`);
-  console.log(`Trust this CA cert on test devices: ${ca.certPath}`);
+  const proxyEnv = runtime.proxy.getProxyEnv();
+  console.log(`Proxy listening on :${runtime.proxyPort}${runtime.proxyPort !== preferredProxyPort ? ` (preferred port ${preferredProxyPort} was busy)` : ""}`);
+  console.log(`Control API listening on :${runtime.apiPort}${runtime.apiPort !== preferredApiPort ? ` (preferred port ${preferredApiPort} was busy)` : ""}`);
+  console.log(`Set device proxy to host=<your-mac-ip> port=${runtime.proxyPort}`);
+  console.log(`Trust this CA cert on test devices: ${runtime.certPath}`);
   console.log(`Suggested env: HTTP_PROXY=${proxyEnv.HTTP_PROXY} HTTPS_PROXY=${proxyEnv.HTTPS_PROXY}`);
 
-  process.on("SIGINT", async () => {
-    await apiServer.stop();
-    await proxy.stop();
+  if (runtime.systemProxyManaged) {
+    console.log(`macOS system proxy set on network service "${runtime.networkServiceName}" -> 127.0.0.1:${runtime.proxyPort} (will be restored on exit)`);
+  } else if (manageSystemProxy) {
+    console.log("Could not automatically set the macOS system proxy (no active network service detected) — set it manually if needed.");
+  }
+
+  const shutdown = async () => {
+    await runtime.stop();
     process.exit(0);
-  });
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 };
 
 run().catch((error) => {

@@ -288,6 +288,23 @@ export const renderRulesEditorHtml = () => `<!doctype html>
       const loadRules = async () => {
         const response = await fetch("/rules");
         state.rules = await response.json();
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("fromDraft") === "1") {
+          try {
+            const draft = JSON.parse(sessionStorage.getItem("http-tools:rule-draft") ?? "null");
+            if (draft) {
+              state.rules.push(draft);
+              sessionStorage.removeItem("http-tools:rule-draft");
+              state.selectedIndex = state.rules.length - 1;
+              populateForm();
+              renderRuleList();
+              statusEl.textContent = "Prefilled a new rule from the selected capture. Adjust and click Save.";
+              return;
+            }
+          } catch {}
+        }
+
         if (state.rules.length === 0) {
           state.rules.push({ id: "new-rule", enabled: true, match: {} });
         }

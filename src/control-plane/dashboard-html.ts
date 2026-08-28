@@ -116,6 +116,18 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       .pill.none { color: var(--muted); }
       .pin-indicator { font-size: 16px; color: #fbbf24; }
       .helper-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+      .row-context-menu {
+        position: fixed; z-index: 50; min-width: 220px; background: var(--panel); border: 1px solid var(--border);
+        border-radius: 10px; padding: 6px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      }
+      .row-context-menu button {
+        display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text);
+        padding: 8px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;
+      }
+      .row-context-menu button:hover { background: var(--panel-soft); }
+      .row-context-menu button.danger { color: #fca5a5; }
+      .row-context-menu .menu-separator { height: 1px; background: var(--border); margin: 6px 2px; }
+      .row-context-menu .menu-hint { padding: 6px 10px; font-size: 11px; color: var(--muted); }
       @media (max-width: 1200px) {
         .shell { flex-direction: column; }
         .shell-panel.timeline-panel, .shell-panel.detail-panel { flex: 1 1 auto !important; width: 100% !important; }
@@ -193,6 +205,8 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
         </section>
       </div>
     </div>
+
+    <div id="rowContextMenu" class="row-context-menu" style="display:none;"></div>
 
     <script>
       const SHELL_RATIO_STORAGE_KEY = "http-tools:shell-timeline-ratio";
@@ -298,6 +312,116 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
         const pinned = isPinned(selected.id);
         pinButton.textContent = pinned ? "Unpin Capture" : "Pin Capture";
       };
+
+      const contextMenuEl = document.getElementById("rowContextMenu");
+
+      const buildCurlCommand = (capture) => {
+        const parts = ["curl", "-i", "-X", capture.method ?? "GET"];
+        for (const [name, value] of capture.rawHeaders ?? []) {
+          if (name.toLowerCase() === "content-length") continue;
+          parts.push("-H", JSON.stringify(name + ": " + value));
+        }
+        if (capture.bodyText) parts.push("--data-raw", JSON.stringify(capture.bodyText));
+        parts.push(JSON.stringify(capture.url ?? ""));
+        return parts.join(" ");
+      };
+
+      const copyToClipboard = async (text) => {
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+      };
+
+      const downloadJson = (filename, data) => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      };
+
+      const removeCapture = (captureId) => {
+        state.captures = state.captures.filter((capture) => capture.id !== captureId);
+        state.requests.delete(captureId);
+        if (state.selectedId === captureId) state.selectedId = null;
+        render();
+      };
+
+      const openAddRuleFromCapture = (capture) => {
+        const parts = parseUrlParts(capture.url);
+        const draft = {
+          id: "rule-from-capture-" + Date.now(),
+          enabled: true,
+          match: {
+            methods: capture.method ? [capture.method] : [],
+            hostname: parts?.hostname ?? "",
+            pathStartsWith: parts?.pathname ?? ""
+          }
+        };
+        sessionStorage.setItem("http-tools:rule-draft", JSON.stringify(draft));
+        window.location.href = "/rules-editor?fromDraft=1";
+      };
+
+      const closeRowContextMenu = () => {
+        contextMenuEl.style.display = "none";
+        contextMenuEl.innerHTML = "";
+      };
+
+      const openRowContextMenu = (event, capture) => {
+        const items = [
+          { label: "Copy URL", action: () => copyToClipboard(capture.url ?? "") },
+          { label: "Copy as cURL", action: () => copyToClipboard(buildCurlCommand(capture)) },
+          { label: "Copy Response Body", action: () => copyToClipboard(capture.responseBodyText ?? ""), disabled: !capture.responseBodyText },
+          { separator: true },
+          { label: "Export Capture as JSON", action: () => downloadJson("capture-" + capture.id + ".json", capture) },
+          { label: "Add Rule from This Request", action: () => openAddRuleFromCapture(capture) },
+          { separator: true },
+          { label: isPinned(capture.id) ? "Unpin Capture" : "Pin Capture", action: () => togglePinned(capture.id) },
+          { label: "Remove This Capture", action: () => removeCapture(capture.id), danger: true }
+        ];
+
+        contextMenuEl.innerHTML = items.map((item) => {
+          if (item.separator) return '<div class="menu-separator"></div>';
+          return '<button data-action' + (item.disabled ? " disabled" : "") + (item.danger ? ' class="danger"' : "") + '>' + escapeHtml(item.label) + '</button>';
+        }).join("");
+
+        const buttons = contextMenuEl.querySelectorAll("button[data-action]");
+        items.filter((item) => !item.separator).forEach((item, index) => {
+          buttons[index].onclick = () => {
+            closeRowContextMenu();
+            item.action();
+          };
+        });
+
+        contextMenuEl.style.display = "block";
+        const menuWidth = 240;
+        const menuHeight = contextMenuEl.offsetHeight || items.length * 34;
+        const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+        const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+        contextMenuEl.style.left = Math.max(8, x) + "px";
+        contextMenuEl.style.top = Math.max(8, y) + "px";
+      };
+
+      document.addEventListener("click", (event) => {
+        if (!contextMenuEl.contains(event.target)) closeRowContextMenu();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeRowContextMenu();
+      });
+      window.addEventListener("scroll", closeRowContextMenu, true);
 
       const formatPayload = (bodyText) => {
         if (bodyText === undefined || bodyText === null || bodyText === "") return "";
@@ -514,6 +638,12 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
           tr.onclick = () => {
             state.selectedId = capture.id;
             render();
+          };
+          tr.oncontextmenu = (event) => {
+            event.preventDefault();
+            state.selectedId = capture.id;
+            render();
+            openRowContextMenu(event, capture);
           };
           rowsEl.appendChild(tr);
         }

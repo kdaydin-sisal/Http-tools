@@ -88,12 +88,14 @@ export class ApiServer {
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse) {
     try {
-      if (request.method === "GET" && request.url === "/health") {
+      const pathname = (request.url ?? "").split("?")[0];
+
+      if (request.method === "GET" && pathname === "/health") {
         writeJson(response, 200, { ok: true });
         return;
       }
 
-      if (request.method === "GET" && request.url === "/") {
+      if (request.method === "GET" && pathname === "/") {
         const html = renderDashboardHtml({
           proxyPort: this.proxyService.getPort(),
           certPath: this.uiContext.certPath,
@@ -103,13 +105,13 @@ export class ApiServer {
         return;
       }
 
-      if (request.method === "GET" && request.url === "/rules-editor") {
+      if (request.method === "GET" && pathname === "/rules-editor") {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(renderRulesEditorHtml());
         return;
       }
 
-      if (request.method === "GET" && request.url === "/onboarding") {
+      if (request.method === "GET" && pathname === "/onboarding") {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(renderOnboardingHtml({
           proxyPort: this.proxyService.getPort(),
@@ -118,7 +120,7 @@ export class ApiServer {
         return;
       }
 
-      if (request.method === "GET" && request.url === "/certs/ca.cer") {
+      if (request.method === "GET" && pathname === "/certs/ca.cer") {
         const certDer = new X509Certificate(this.uiContext.certPem).raw;
         response.writeHead(200, {
           "content-type": "application/x-x509-ca-cert",
@@ -129,12 +131,12 @@ export class ApiServer {
         return;
       }
 
-      if (request.method === "GET" && request.url === "/rules") {
+      if (request.method === "GET" && pathname === "/rules") {
         writeJson(response, 200, this.proxyService.listRules());
         return;
       }
 
-      if (request.method === "GET" && request.url === "/captures") {
+      if (request.method === "GET" && pathname === "/captures") {
         writeJson(response, 200, {
           requests: this.requestEvents,
           responses: this.responseEvents,
@@ -151,7 +153,7 @@ export class ApiServer {
         return;
       }
 
-      if (request.method === "GET" && request.url === "/diagnostics/unsupported-traffic") {
+      if (request.method === "GET" && pathname === "/diagnostics/unsupported-traffic") {
         writeJson(response, 200, {
           tlsFailures: this.tlsFailureEvents.slice(-200),
           notes: [
@@ -173,18 +175,18 @@ export class ApiServer {
         return;
       }
 
-      if (request.method === "GET" && request.url === "/events") {
+      if (request.method === "GET" && pathname === "/events") {
         this.openSse(response);
         return;
       }
 
-      if (request.method === "GET" && request.url === "/api/devices") {
+      if (request.method === "GET" && pathname === "/api/devices") {
         const devices = await this.deviceManager.listAllDevices();
         writeJson(response, 200, devices);
         return;
       }
 
-      if (request.method === "GET" && request.url === "/api/devices/sessions") {
+      if (request.method === "GET" && pathname === "/api/devices/sessions") {
         writeJson(response, 200, this.deviceManager.listActiveSessions());
         return;
       }
