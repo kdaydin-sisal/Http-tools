@@ -34,8 +34,19 @@ fun AppPickerScreen(onDone: () -> Unit) {
     val pm = context.packageManager
 
     val installedApps = remember {
+        // Show any app with a launcher entry (i.e. something the user can actually open),
+        // rather than filtering purely on FLAG_SYSTEM — many OEMs ship common apps
+        // (browsers, app stores, etc.) flagged as system apps even though users install
+        // updates and use them like any other app.
+        val launcherIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+            addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        }
+        val launchablePackages = pm.queryIntentActivities(launcherIntent, 0)
+            .map { it.activityInfo.packageName }
+            .toSet()
+
         pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
+            .filter { it.packageName in launchablePackages }
             .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
     }
 

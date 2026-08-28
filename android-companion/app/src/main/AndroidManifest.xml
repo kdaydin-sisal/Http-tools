@@ -13,6 +13,17 @@
     <!-- mDNS/NSD pairing discovery fallback. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!--
+      Needed so the app picker can see all installed apps. Without this, Android 11+'s
+      package-visibility filtering hides most apps from getInstalledApplications(),
+      which is why only a couple of apps (including this one) were showing up.
+      This is a legitimate use case (an interception/debugging tool must be able to
+      list arbitrary apps to route through its tunnel), but Play Store distribution
+      would require a declared-use justification; fine for a sideloaded debug tool.
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" xmlns:tools="http://schemas.android.com/tools" />
+
     <!-- QR pairing (primary). Runtime-requested; app must gracefully fall back to mDNS if denied. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />

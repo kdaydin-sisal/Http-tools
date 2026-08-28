@@ -28,6 +28,7 @@ import com.httptools.companion.vpn.CompanionVpnService
 @Composable
 fun StatusScreen(pairing: PairingInfo, caCertDer: ByteArray?, onPickApps: () -> Unit) {
     val context = LocalContext.current
+    val selectedAppsStore = remember { com.httptools.companion.selection.SelectedAppsStore(context) }
     var vpnEnabled by remember { mutableStateOf(false) }
     var certTrusted by remember(caCertDer) {
         mutableStateOf(caCertDer?.let { CaCertHelper.isCertLikelyTrusted(context, it) } ?: false)
@@ -46,6 +47,9 @@ fun StatusScreen(pairing: PairingInfo, caCertDer: ByteArray?, onPickApps: () -> 
                 Text("Install Certificate")
             }
         }
+        if (caCertDer == null) {
+            Text("Still fetching the CA certificate from the Mac — make sure it's reachable on the same network.")
+        }
         if (caCertDer != null) {
             androidx.compose.material3.TextButton(onClick = {
                 certTrusted = CaCertHelper.isCertLikelyTrusted(context, caCertDer)
@@ -58,11 +62,18 @@ fun StatusScreen(pairing: PairingInfo, caCertDer: ByteArray?, onPickApps: () -> 
             Text("Choose apps to intercept")
         }
 
+        val selectedCount = selectedAppsStore.load().size
+        if (selectedCount == 0) {
+            Text("⚠️ No apps selected — the tunnel will not start until you choose at least one app.")
+        } else {
+            Text("$selectedCount app${if (selectedCount == 1) "" else "s"} selected for interception.")
+        }
+
         androidx.compose.foundation.layout.Row(
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
         ) {
             Text("Tunnel active")
-            Switch(checked = vpnEnabled, onCheckedChange = { checked ->
+            Switch(checked = vpnEnabled, enabled = selectedCount > 0, onCheckedChange = { checked ->
                 vpnEnabled = checked
                 val serviceIntent = Intent(context, CompanionVpnService::class.java)
                 if (checked) {

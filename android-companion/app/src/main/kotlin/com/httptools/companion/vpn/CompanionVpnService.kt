@@ -42,6 +42,15 @@ class CompanionVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
+        if (selectedApps.isEmpty()) {
+            // Nothing selected yet — do not establish a tunnel that would capture
+            // everything by default; require an explicit app selection first. Checked
+            // before startForeground() so we never call stopSelf() immediately after
+            // starting foreground (which races into ForegroundServiceDidNotStartInTimeException).
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         startForeground(NOTIFICATION_ID, buildNotification())
 
         val builder = Builder()
@@ -49,13 +58,6 @@ class CompanionVpnService : VpnService() {
             .addAddress(TUNNEL_IPV4_ADDRESS, 32)
             .addRoute("0.0.0.0", 0)
             .addDnsServer("8.8.8.8")
-
-        if (selectedApps.isEmpty()) {
-            // Nothing selected yet — do not establish a tunnel that would capture
-            // everything by default; require an explicit app selection first.
-            stopSelf()
-            return START_NOT_STICKY
-        }
 
         selectedApps.forEach { pkg ->
             runCatching { builder.addAllowedApplication(pkg) }
