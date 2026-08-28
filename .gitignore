@@ -14,3 +14,13 @@ npm-debug.log*
 .env.*
 coverage/
 *.tsbuildinfo
+
+# Android companion app
+android-companion/.gradle/
+android-companion/build/
+android-companion/app/build/
+android-companion/local.properties
+android-companion/.idea/
+android-companion/*.iml
+android-companion/captures/
+android-companion/.cxx/
