@@ -250,7 +250,8 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
         selectedId: null,
         method: "",
         search: "",
-        pinnedIds: new Set()
+        pinnedIds: new Set(),
+        sectionOpenState: new Map()
       };
 
       const rowsEl = document.getElementById("captureRows");
@@ -321,8 +322,11 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
         return '<pre class="payload mono">' + escapeHtml(formatted) + '</pre>';
       };
 
-      const renderSection = (title, content, open = true) =>
-        '<details class="section"' + (open ? ' open' : '') + '><summary>' + escapeHtml(title) + '</summary><div class="section-body">' + content + '</div></details>';
+      const renderSection = (title, content, open = true) => {
+        const key = title;
+        const isOpen = state.sectionOpenState.has(key) ? state.sectionOpenState.get(key) : open;
+        return '<details class="section" data-section-key="' + escapeHtml(key) + '"' + (isOpen ? ' open' : '') + '><summary>' + escapeHtml(title) + '</summary><div class="section-body">' + content + '</div></details>';
+      };
 
       const renderRulePills = (ruleIds) => {
         if (!ruleIds || ruleIds.length === 0) return '<span class="pill none">None</span>';
@@ -439,6 +443,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
           return;
         }
 
+        const scrollTop = detailEl.scrollTop;
         detailEl.innerHTML = [
           '<div class="summary-grid">',
             '<div class="summary-item"><div class="summary-label">Method</div><div class="summary-value mono">' + escapeHtml(capture.method ?? "-") + '</div></div>',
@@ -456,6 +461,14 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
           renderSection("Parsed Response Set-Cookies", renderParsedCookies(capture.responseRawHeaders, "response"), false),
           renderSection("Response Payload", renderPayload(capture.responseBodyText), false)
         ].join("");
+
+        detailEl.querySelectorAll("details.section").forEach((details) => {
+          const key = details.getAttribute("data-section-key");
+          details.addEventListener("toggle", () => {
+            state.sectionOpenState.set(key, details.open);
+          });
+        });
+        detailEl.scrollTop = scrollTop;
 
         updatePinButton();
       };
