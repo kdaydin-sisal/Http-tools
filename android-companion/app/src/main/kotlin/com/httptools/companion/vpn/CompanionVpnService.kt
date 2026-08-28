@@ -93,6 +93,9 @@ class CompanionVpnService : VpnService() {
               port: $socksPort
               address: $socksHost
               udp: 'udp'
+            misc:
+              log-file: stdout
+              log-level: debug
         """.trimIndent()
         val file = File(filesDir, "tunnel-config.yml")
         file.writeText(config)

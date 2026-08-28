@@ -12,7 +12,8 @@ import { renderRulesEditorHtml } from "./rules-editor-html.js";
 type StreamEvent =
   | { type: "request"; payload: RequestEvent }
   | { type: "response"; payload: ResponseEvent }
-  | { type: "tls-failure"; payload: TlsFailureEvent };
+  | { type: "tls-failure"; payload: TlsFailureEvent }
+  | { type: "devices-changed"; payload: { disconnected: string[] } };
 
 const readJsonBody = async <T>(request: IncomingMessage): Promise<T> => {
   const chunks: Buffer[] = [];
@@ -42,6 +43,7 @@ export class ApiServer {
   });
   private readonly maxStoredEvents = 1000;
   private readonly deviceManager = new DeviceManager();
+  private disconnectPruneTimer: ReturnType<typeof setInterval> | null = null;
   private pairingService: PairingService | null = null;
 
   constructor(
@@ -74,15 +76,40 @@ export class ApiServer {
         resolve();
       });
     });
+
+    // Detect unplugged/disconnected devices that still have an active legacy
+    // ADB-based proxy session so stale bookkeeping doesn't linger — the on-device
+    // setting itself can't be reached once disconnected, but this at least stops
+    // us reporting it as "listening" and surfaces a clear signal to reconfigure
+    // if the device comes back.
+    this.disconnectPruneTimer = setInterval(() => {
+      void this.deviceManager.pruneDisconnectedSessions().then((stale) => {
+        if (stale.length > 0) {
+          this.broadcast({ type: "devices-changed", payload: { disconnected: stale } });
+        }
+      });
+    }, 5000);
   }
 
   async stop(): Promise<void> {
+    if (this.disconnectPruneTimer) {
+      clearInterval(this.disconnectPruneTimer);
+      this.disconnectPruneTimer = null;
+    }
     this.pairingService?.stop();
     this.pairingService = null;
     for (const client of this.sseClients) {
       client.end();
     }
     this.sseClients.clear();
+
+    // Revert any Android devices still configured via the legacy ADB global-proxy
+    // "Listen" flow — otherwise a device keeps pointing its global HTTP proxy at
+    // this Mac forever after the app quits, breaking its networking. (The
+    // companion app's VpnService-based sessions don't need this: Android tears
+    // that down automatically the moment the service stops, with no persistent
+    // device-side setting left behind.)
+    await this.deviceManager.stopAllSessions();
 
     await new Promise<void>((resolve, reject) => {
       this.server.close((error) => {

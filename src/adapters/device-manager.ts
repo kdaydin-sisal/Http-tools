@@ -186,11 +186,56 @@ export class DeviceManager {
     };
   }
 
+  /**
+   * Reverts every active Android global-proxy session. Must be called on app shutdown
+   * (normal quit, crash-recovery best-effort, SIGINT/SIGTERM) — otherwise a device that
+   * was configured via the "Listen" button keeps pointing at this Mac's proxy forever,
+   * breaking its networking the moment this tool stops or the device disconnects and
+   * reconnects to a different network. This is the exact failure mode the VPN-based
+   * companion app was built to avoid for its own sessions, but the legacy ADB-based
+   * per-device-proxy path (still used for devices not paired via the companion app)
+   * needs the same guarantee.
+   */
+  async stopAllSessions(): Promise<void> {
+    const deviceIds = [...this.activeSessions.keys()];
+    await Promise.all(deviceIds.map((deviceId) => this.stopListening(deviceId).catch(() => undefined)));
+  }
+
   getActiveSession(deviceId: string): ActiveListeningSession | undefined {
     return this.activeSessions.get(deviceId);
   }
 
   listActiveSessions(): ActiveListeningSession[] {
     return [...this.activeSessions.values()];
+  }
+
+  /**
+   * Polls `adb devices` and clears any active session whose device has disconnected
+   * (unplugged, adb killed, etc.) — the on-device proxy setting itself can't be reached
+   * once disconnected, but this at least drops our stale bookkeeping and surfaces a
+   * clear warning instead of silently pretending the session is still active. If the
+   * device reconnects to the same Mac later without the proxy having been cleared,
+   * the user will see the stale setting and should run `stopListening` (or the
+   * onboarding "Stop" action) to clear it, or clear it manually with:
+   *   adb -s <serial> shell settings put global http_proxy :0
+   */
+  async pruneDisconnectedSessions(): Promise<string[]> {
+    if (this.activeSessions.size === 0) return [];
+    let connectedSerials: Set<string>;
+    try {
+      const devices = await this.androidAdapter.listDevices();
+      connectedSerials = new Set(devices.filter((d) => d.state === "device").map((d) => d.serial));
+    } catch {
+      return [];
+    }
+
+    const stale: string[] = [];
+    for (const [deviceId, session] of this.activeSessions) {
+      if (session.platform === "android" && !connectedSerials.has(deviceId)) {
+        stale.push(deviceId);
+      }
+    }
+    stale.forEach((deviceId) => this.activeSessions.delete(deviceId));
+    return stale;
   }
 }
