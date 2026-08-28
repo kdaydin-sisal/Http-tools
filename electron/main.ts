@@ -1,7 +1,10 @@
-import { app, Menu, Tray, shell, nativeImage, dialog } from "electron";
+import { app, Menu, Tray, nativeImage, dialog, BrowserWindow } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startAppRuntime, type AppRuntimeHandle } from "../src/core/app-runtime.js";
+import { ensureDevToolsOnPath } from "../src/core/dev-tool-path.js";
+
+ensureDevToolsOnPath();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,6 +27,7 @@ app.dock?.hide();
 let tray: Tray | null = null;
 let runtime: AppRuntimeHandle | null = null;
 let starting = false;
+let appWindow: BrowserWindow | null = null;
 
 const buildTrayIcon = () => {
   const iconPath = path.join(__dirname, "assets", "tray-icon.png");
@@ -37,9 +41,35 @@ const trayTitle = () => {
   return runtime ? " ●" : " ○";
 };
 
-const openUrl = (path: string) => {
+const openUrl = (urlPath: string) => {
   if (!runtime) return;
-  shell.openExternal(`http://127.0.0.1:${runtime.apiPort}${path}`);
+  const url = `http://127.0.0.1:${runtime.apiPort}${urlPath}`;
+  if (!appWindow || appWindow.isDestroyed()) {
+    appWindow = new BrowserWindow({
+      width: 1280,
+      height: 860,
+      minWidth: 900,
+      minHeight: 560,
+      title: "HTTP Tools",
+      webPreferences: {
+        contextIsolation: true,
+        sandbox: true,
+      },
+    });
+    appWindow.on("close", (event) => {
+      if (quitting) return;
+      // Keep the app resident as a menu-bar tool; hide the window instead of
+      // destroying it so re-opening from the tray is instant.
+      event.preventDefault();
+      appWindow?.hide();
+    });
+    appWindow.on("closed", () => {
+      appWindow = null;
+    });
+  }
+  appWindow.loadURL(url);
+  appWindow.show();
+  appWindow.focus();
 };
 
 const startProxy = async () => {

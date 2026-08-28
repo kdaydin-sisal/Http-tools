@@ -181,8 +181,8 @@ export class ApiServer {
       }
 
       if (request.method === "GET" && pathname === "/api/devices") {
-        const devices = await this.deviceManager.listAllDevices();
-        writeJson(response, 200, devices);
+        const result = await this.deviceManager.listAllDevices();
+        writeJson(response, 200, result);
         return;
       }
 

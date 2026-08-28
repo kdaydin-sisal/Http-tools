@@ -154,6 +154,7 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
             <option value="idle">Idle</option>
           </select>
         </div>
+        <div id="device-warnings"></div>
         <div id="device-list"></div>
       </div>
     </div>
@@ -181,7 +182,9 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
         try {
           const res = await fetch('/api/devices');
           if (!res.ok) throw new Error(await res.text());
-          allDevices = await res.json();
+          const result = await res.json();
+          allDevices = result.devices ?? [];
+          renderWarnings(result.warnings ?? {});
         } catch (err) {
           allDevices = [];
           document.getElementById('device-list').innerHTML =
@@ -193,6 +196,19 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
         btn.disabled = false;
         btn.textContent = '↻ Refresh';
         renderDevices();
+      }
+
+      function renderWarnings(warnings) {
+        const el = document.getElementById('device-warnings');
+        const entries = Object.entries(warnings || {}).filter(([, msg]) => !!msg);
+        if (entries.length === 0) {
+          el.innerHTML = '';
+          return;
+        }
+        const labels = { android: 'Android (ADB)', ios: 'iOS (Xcode / simctl)' };
+        el.innerHTML = entries.map(([platform, msg]) =>
+          '<div class="msg-box error">' + escapeHtml(labels[platform] || platform) + ': ' + escapeHtml(msg) + '</div>'
+        ).join('');
       }
 
       function renderDevices() {

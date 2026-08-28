@@ -36,13 +36,21 @@ const getMacIp = (): string => {
   return "127.0.0.1";
 };
 
+export interface DeviceListResult {
+  devices: DiscoveredDevice[];
+  warnings: { android?: string; ios?: string };
+}
+
+const describeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 export class DeviceManager {
   private readonly androidAdapter = new AndroidAdapter();
   private readonly iosAdapter = new IosAdapter();
   private readonly activeSessions = new Map<string, ActiveListeningSession>();
 
-  async listAllDevices(): Promise<DiscoveredDevice[]> {
+  async listAllDevices(): Promise<DeviceListResult> {
     const devices: DiscoveredDevice[] = [];
+    const warnings: { android?: string; ios?: string } = {};
 
     // Android devices
     try {
@@ -64,8 +72,8 @@ export class DeviceManager {
           listeningStartedAt: session?.startedAt,
         });
       }
-    } catch {
-      // ADB not available or no devices — skip silently
+    } catch (error) {
+      warnings.android = describeError(error);
     }
 
     // iOS simulators
@@ -87,11 +95,11 @@ export class DeviceManager {
           listeningStartedAt: session?.startedAt,
         });
       }
-    } catch {
-      // simctl not available — skip silently
+    } catch (error) {
+      warnings.ios = describeError(error);
     }
 
-    return devices;
+    return { devices, warnings };
   }
 
   async startListening(deviceId: string, platform: DevicePlatform, proxyPort: number, _controlPort: number, certPem: string, certPath: string): Promise<{ ok: boolean; message: string; requiresManualCertInstall?: boolean }> {

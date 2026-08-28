@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { startAppRuntime } from "./core/app-runtime.js";
+import { ensureDevToolsOnPath } from "./core/dev-tool-path.js";
 import type { TrafficRule } from "./core/types.js";
+
+ensureDevToolsOnPath();
 
 const parsePort = (value: string | undefined, fallback: number) => {
   if (!value) return fallback;
