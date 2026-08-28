@@ -1,0 +1,38 @@
+[
+  {
+    "id": "inject-debug-header",
+    "enabled": true,
+    "match": {
+      "urlIncludes": "api.example.com"
+    },
+    "request": {
+      "setHeaders": {
+        "x-debug-proxy": "enabled"
+      }
+    }
+  },
+  {
+    "id": "rewrite-response-body",
+    "enabled": true,
+    "match": {
+      "pathStartsWith": "/v1/feature-flags"
+    },
+    "response": {
+      "replaceBodyText": "{\"newFeature\":true}",
+      "setHeaders": {
+        "content-type": "application/json"
+      }
+    }
+  },
+  {
+    "id": "short-circuit-health",
+    "enabled": true,
+    "match": {
+      "pathStartsWith": "/health"
+    },
+    "staticResponse": {
+      "statusCode": 200,
+      "bodyText": "proxied-ok"
+    }
+  }
+]
