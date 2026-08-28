@@ -93,6 +93,11 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
       .filter-bar select { background: var(--panel-soft); color: var(--text); border: 1px solid var(--border);
                            border-radius: 6px; padding: 5px 9px; font-size: 13px; }
 
+      .companion-pairing { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+      .companion-pairing-qr { background: #fff; padding: 10px; border-radius: 8px; display: flex; }
+      .companion-pairing-info { flex: 1; min-width: 220px; }
+      .companion-pairing-info p { margin: 4px 0; font-size: 14px; }
+
       @media (max-width: 700px) {
         .topbar { flex-direction: column; align-items: flex-start; }
         .device-card { flex-direction: column; }
@@ -133,6 +138,23 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
           </div>
         </div>
         <div class="cert-info" title="CA certificate path">${context.certPath}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">
+          📱 Android Companion App
+          <button class="btn btn-ghost" id="btn-refresh-pairing" onclick="refreshPairingQr()" title="Regenerate pairing code">↻ New code</button>
+        </div>
+        <div class="companion-pairing">
+          <div class="companion-pairing-qr">
+            <img id="pairing-qr-image" alt="Pairing QR code" width="220" height="220" />
+          </div>
+          <div class="companion-pairing-info">
+            <p>Scan this code from the HTTP Tools Companion app to pair for per-app interception (no global proxy settings needed).</p>
+            <p style="color: var(--muted); font-size: 13px;">Camera unavailable? The companion app can also auto-discover this Mac via mDNS on the same Wi-Fi network — no manual entry required either way.</p>
+            <p style="color: var(--muted); font-size: 12px;">Code expires in 5 minutes; click "New code" to regenerate.</p>
+          </div>
+        </div>
       </div>
 
       <div class="section">
@@ -342,11 +364,21 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       }
 
+      async function refreshPairingQr() {
+        const img = document.getElementById('pairing-qr-image');
+        if (img) {
+          img.src = '/api/pairing/qr?format=png&t=' + Date.now();
+        }
+      }
+
       // Initial load
       loadDevices();
+      refreshPairingQr();
 
       // Auto-refresh every 8s to catch newly connected/booted devices
       setInterval(loadDevices, 8000);
+      // Regenerate the pairing QR before its 5-minute token expires
+      setInterval(refreshPairingQr, 4 * 60 * 1000);
     </script>
   </body>
 </html>`;

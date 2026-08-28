@@ -1,6 +1,6 @@
-import os from "node:os";
 import { AndroidAdapter } from "./android/android-adapter.js";
 import { IosAdapter } from "./ios/ios-adapter.js";
+import { getMacIp } from "../core/network-info.js";
 
 export type DevicePlatform = "android" | "ios";
 export type DeviceState = "active" | "offline" | "unauthorized" | "booted" | "shutdown" | "unknown";
@@ -22,19 +22,6 @@ export interface ActiveListeningSession {
   proxyPort: number;
   certInstalled: boolean;
 }
-
-const getMacIp = (): string => {
-  const interfaces = os.networkInterfaces();
-  for (const ifaces of Object.values(interfaces)) {
-    if (!ifaces) continue;
-    for (const iface of ifaces) {
-      if (iface.family === "IPv4" && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return "127.0.0.1";
-};
 
 export interface DeviceListResult {
   devices: DiscoveredDevice[];

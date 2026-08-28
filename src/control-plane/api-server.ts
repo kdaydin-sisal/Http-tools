@@ -1,8 +1,10 @@
 import { X509Certificate } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import QRCode from "qrcode";
 import { ProxyService } from "../core/proxy-service.js";
 import type { RequestEvent, ResponseEvent, TlsFailureEvent, TrafficRule } from "../core/types.js";
 import { DeviceManager, type DevicePlatform } from "../adapters/device-manager.js";
+import { PairingService } from "../core/pairing-service.js";
 import { renderDashboardHtml } from "./dashboard-html.js";
 import { renderOnboardingHtml } from "./onboarding-html.js";
 import { renderRulesEditorHtml } from "./rules-editor-html.js";
@@ -40,6 +42,7 @@ export class ApiServer {
   });
   private readonly maxStoredEvents = 1000;
   private readonly deviceManager = new DeviceManager();
+  private pairingService: PairingService | null = null;
 
   constructor(
     private readonly proxyService: ProxyService,
@@ -63,6 +66,7 @@ export class ApiServer {
   }
 
   async start(port: number): Promise<void> {
+    this.pairingService = new PairingService(port);
     await new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(port, () => {
@@ -73,6 +77,8 @@ export class ApiServer {
   }
 
   async stop(): Promise<void> {
+    this.pairingService?.stop();
+    this.pairingService = null;
     for (const client of this.sseClients) {
       client.end();
     }
@@ -183,6 +189,26 @@ export class ApiServer {
       if (request.method === "GET" && pathname === "/api/devices") {
         const result = await this.deviceManager.listAllDevices();
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/pairing/qr") {
+        const payload = this.pairingService?.issuePayload();
+        if (!payload) {
+          writeJson(response, 503, { error: "Pairing service not ready" });
+          return;
+        }
+        const wantsImage = (request.url ?? "").includes("format=png");
+        if (wantsImage) {
+          const png = await QRCode.toBuffer(JSON.stringify(payload), { type: "png", width: 320 });
+          response.writeHead(200, {
+            "content-type": "image/png",
+            "content-length": png.byteLength,
+          });
+          response.end(png);
+          return;
+        }
+        writeJson(response, 200, payload);
         return;
       }
 
