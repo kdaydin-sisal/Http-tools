@@ -8,17 +8,22 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.httptools.companion.cert.CaCertHelper
 import com.httptools.companion.pairing.PairingInfo
 import com.httptools.companion.vpn.CompanionVpnService
+import hev.htproxy.TProxyService
 
 /**
  * Status screen: authoritative on/off toggle for the tunnel (fully controlled
@@ -28,10 +33,24 @@ import com.httptools.companion.vpn.CompanionVpnService
 @Composable
 fun StatusScreen(pairing: PairingInfo, caCertDer: ByteArray?, onPickApps: () -> Unit) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val selectedAppsStore = remember { com.httptools.companion.selection.SelectedAppsStore(context) }
-    var vpnEnabled by remember { mutableStateOf(false) }
+    // Reflects the tunnel's actual native running state rather than purely local
+    // optimistic UI state, so the switch can't desync from reality (e.g. after the
+    // service was stopped externally, or on returning to this screen).
+    var vpnEnabled by remember { mutableStateOf(runCatching { TProxyService.TProxyIsRunning() }.getOrDefault(false)) }
     var certTrusted by remember(caCertDer) {
         mutableStateOf(caCertDer?.let { CaCertHelper.isCertLikelyTrusted(context, it) } ?: false)
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vpnEnabled = runCatching { TProxyService.TProxyIsRunning() }.getOrDefault(false)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {

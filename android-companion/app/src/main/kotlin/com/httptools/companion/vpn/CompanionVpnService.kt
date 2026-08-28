@@ -75,7 +75,7 @@ class CompanionVpnService : VpnService() {
             }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     /**
@@ -107,6 +107,20 @@ class CompanionVpnService : VpnService() {
         tunFd?.close()
         tunFd = null
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Belt-and-suspenders: if the user swipes the app away from recents,
+        // tear the tunnel down instead of leaving it (and the foreground
+        // notification) running invisibly in the background. The explicit
+        // switch-off path already calls stopService(), but this guarantees
+        // the tunnel never outlives the app being closed even if that path
+        // is missed (e.g. app killed before the toggle handler runs).
+        runCatching { TProxyService.TProxyStopService() }
+        tunFd?.close()
+        tunFd = null
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onRevoke() {
