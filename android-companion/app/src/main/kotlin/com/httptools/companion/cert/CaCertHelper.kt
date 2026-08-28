@@ -18,17 +18,17 @@ import java.security.cert.X509Certificate
 object CaCertHelper {
 
     /**
-     * Returns true if a certificate matching [pemBytes] appears to already be
+     * Returns true if a certificate matching [certBytes] appears to already be
      * present in the user's trusted credential store. This is a best-effort
      * check: Android does not expose a direct "is this exact CA trusted" query,
      * so we compare against installed user certificates by subject + fingerprint
      * where accessible; a false negative here just means we show the install
      * flow again, which is harmless (Android dedupes identical certs).
      */
-    fun isCertLikelyTrusted(context: Context, pemBytes: ByteArray): Boolean {
+    fun isCertLikelyTrusted(context: Context, certBytes: ByteArray): Boolean {
         return runCatching {
             val cf = CertificateFactory.getInstance("X.509")
-            val target = cf.generateCertificate(ByteArrayInputStream(pemBytes)) as X509Certificate
+            val target = cf.generateCertificate(ByteArrayInputStream(certBytes)) as X509Certificate
             val trustedChain = KeyChain.getCertificateChain(
                 context,
                 target.subjectX500Principal.name
@@ -38,8 +38,8 @@ object CaCertHelper {
     }
 
     /** Builds the intent that opens Android's system "Install certificate" flow, pre-filled with the CA bytes. */
-    fun createInstallIntent(pemBytes: ByteArray) = KeyChain.createInstallIntent().apply {
-        putExtra(KeyChain.EXTRA_CERTIFICATE, pemBytes)
+    fun createInstallIntent(certBytes: ByteArray) = KeyChain.createInstallIntent().apply {
+        putExtra(KeyChain.EXTRA_CERTIFICATE, certBytes)
         putExtra(KeyChain.EXTRA_NAME, "HTTP Tools CA")
     }
 }

@@ -77,7 +77,9 @@ class MainActivity : ComponentActivity() {
 
 @androidx.compose.runtime.Composable
 private fun StatusRoute(pairing: PairingInfo, navController: androidx.navigation.NavController) {
-    // CA cert bytes are fetched from the paired Mac's existing /api/ca-cert-style endpoint
-    // once wired (companion-cert-trust todo); left null here in the initial scaffold.
-    StatusScreen(pairing = pairing, caCertPem = null, onPickApps = { navController.navigate("apps") })
+    var caCertDer by remember(pairing) { mutableStateOf<ByteArray?>(null) }
+    androidx.compose.runtime.LaunchedEffect(pairing) {
+        caCertDer = com.httptools.companion.cert.CaCertFetcher.fetch(pairing.host, pairing.port)
+    }
+    StatusScreen(pairing = pairing, caCertDer = caCertDer, onPickApps = { navController.navigate("apps") })
 }

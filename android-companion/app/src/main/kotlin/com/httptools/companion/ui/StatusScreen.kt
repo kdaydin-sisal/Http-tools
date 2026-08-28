@@ -26,24 +26,31 @@ import com.httptools.companion.vpn.CompanionVpnService
  * is no global state to revert), plus CA cert trust status and guided install.
  */
 @Composable
-fun StatusScreen(pairing: PairingInfo, caCertPem: ByteArray?, onPickApps: () -> Unit) {
+fun StatusScreen(pairing: PairingInfo, caCertDer: ByteArray?, onPickApps: () -> Unit) {
     val context = LocalContext.current
     var vpnEnabled by remember { mutableStateOf(false) }
-    var certTrusted by remember {
-        mutableStateOf(caCertPem?.let { CaCertHelper.isCertLikelyTrusted(context, it) } ?: false)
+    var certTrusted by remember(caCertDer) {
+        mutableStateOf(caCertDer?.let { CaCertHelper.isCertLikelyTrusted(context, it) } ?: false)
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Paired with ${pairing.host}:${pairing.port}")
 
         Text(if (certTrusted) "✅ CA certificate trusted" else "⚠️ CA certificate not yet trusted")
-        if (!certTrusted && caCertPem != null) {
+        if (!certTrusted && caCertDer != null) {
             Button(onClick = {
                 context.startActivity(
-                    CaCertHelper.createInstallIntent(caCertPem).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    CaCertHelper.createInstallIntent(caCertDer).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }) {
                 Text("Install Certificate")
+            }
+        }
+        if (caCertDer != null) {
+            androidx.compose.material3.TextButton(onClick = {
+                certTrusted = CaCertHelper.isCertLikelyTrusted(context, caCertDer)
+            }) {
+                Text("Recheck trust status")
             }
         }
 
