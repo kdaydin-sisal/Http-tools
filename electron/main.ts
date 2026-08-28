@@ -1,5 +1,9 @@
 import { app, Menu, Tray, shell, nativeImage, dialog } from "electron";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { startAppRuntime, type AppRuntimeHandle } from "../src/core/app-runtime.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Electron menu-bar (tray) shell around the HTTP Tools proxy.
@@ -22,15 +26,15 @@ let runtime: AppRuntimeHandle | null = null;
 let starting = false;
 
 const buildTrayIcon = () => {
-  // 16x16 transparent PNG placeholder rendered as a template image; replaced with a
-  // proper vector icon asset later (see docs/macos-packaging.md).
-  const icon = nativeImage.createEmpty();
+  const iconPath = path.join(__dirname, "assets", "tray-icon.png");
+  const icon = nativeImage.createFromPath(iconPath);
+  icon.setTemplateImage(true);
   return icon;
 };
 
 const trayTitle = () => {
-  if (starting) return "HT ⋯";
-  return runtime ? "HT ●" : "HT ○";
+  if (starting) return " ⋯";
+  return runtime ? " ●" : " ○";
 };
 
 const openUrl = (path: string) => {

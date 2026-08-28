@@ -12,7 +12,7 @@
     "android:onboard": "node --enable-source-maps dist/bin/android-onboard.js",
     "ios:onboard": "node --enable-source-maps dist/bin/ios-onboard.js",
     "validate:smoke": "node --enable-source-maps dist/bin/smoke-validate.js",
-    "electron:build": "tsc -p tsconfig.electron.json",
+    "electron:build": "tsc -p tsconfig.electron.json && mkdir -p dist-electron/electron/assets && cp electron/assets/*.png dist-electron/electron/assets/",
     "electron:start": "npm run electron:build && electron .",
     "electron:package": "npm run electron:build && electron-builder"
   },
@@ -33,14 +33,15 @@
     "productName": "HTTP Tools",
     "files": [
       "dist-electron/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/**/*"
     ],
     "directories": {
       "output": "release"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": "dmg"
+      "target": "dir"
     }
   }
 }
