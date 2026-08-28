@@ -34,10 +34,10 @@ fun AppPickerScreen(onDone: () -> Unit) {
     val pm = context.packageManager
 
     val installedApps = remember {
-        // Show any app with a launcher entry (i.e. something the user can actually open),
-        // rather than filtering purely on FLAG_SYSTEM — many OEMs ship common apps
-        // (browsers, app stores, etc.) flagged as system apps even though users install
-        // updates and use them like any other app.
+        // Primary source: apps with a launcher entry (what the user can actually open).
+        // Also merge in any additional non-system apps without a launcher activity
+        // (e.g. ".test"/instrumentation build variants) so they remain selectable —
+        // otherwise test/debug app variants silently disappear from the picker.
         val launcherIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
             addCategory(android.content.Intent.CATEGORY_LAUNCHER)
         }
@@ -45,9 +45,10 @@ fun AppPickerScreen(onDone: () -> Unit) {
             .map { it.activityInfo.packageName }
             .toSet()
 
-        pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { it.packageName in launchablePackages }
-            .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
+        val allNonSystem = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 || it.packageName in launchablePackages }
+
+        allNonSystem.sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
     }
 
     var selected by remember { mutableStateOf(store.load()) }
@@ -58,7 +59,10 @@ fun AppPickerScreen(onDone: () -> Unit) {
             items(installedApps) { app ->
                 val packageName = app.packageName
                 val label = pm.getApplicationLabel(app).toString()
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
                     Checkbox(
                         checked = selected.contains(packageName),
                         onCheckedChange = { checked ->
@@ -66,7 +70,14 @@ fun AppPickerScreen(onDone: () -> Unit) {
                             store.save(selected)
                         }
                     )
-                    Text(label)
+                    Column(Modifier.padding(start = 4.dp)) {
+                        Text(label)
+                        Text(
+                            packageName,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }

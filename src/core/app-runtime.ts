@@ -49,7 +49,12 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
     preferredApiPort = 8001,
     preferredSocksPort = 8002,
     rules = [],
-    manageSystemProxy = process.platform === "darwin",
+    // Defaults to off: the Android companion app's VPN tunnel (or manual device
+    // proxy configuration) is now the primary interception path, and setting the
+    // Mac's own system-wide proxy caused this Mac's other apps to lose connectivity
+    // whenever the proxy target became unreachable. Still available as an opt-in
+    // for users who explicitly want Mac app traffic intercepted too.
+    manageSystemProxy = false,
     onRequest,
     onResponse,
     onError,

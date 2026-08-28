@@ -3,6 +3,7 @@ package com.httptools.companion.cert
 import android.content.Context
 import android.security.KeyChain
 import java.io.ByteArrayInputStream
+import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 
@@ -19,21 +20,22 @@ object CaCertHelper {
 
     /**
      * Returns true if a certificate matching [certBytes] appears to already be
-     * present in the user's trusted credential store. This is a best-effort
-     * check: Android does not expose a direct "is this exact CA trusted" query,
-     * so we compare against installed user certificates by subject + fingerprint
-     * where accessible; a false negative here just means we show the install
-     * flow again, which is harmless (Android dedupes identical certs).
+     * present in the device's trust store (system or user-added CAs). Uses the
+     * "AndroidCAStore" KeyStore, which is the actual store consulted for TLS
+     * trust decisions — comparing certs directly (not via KeyChain APIs, which
+     * are for client cert aliases, not CA trust lookups).
      */
     fun isCertLikelyTrusted(context: Context, certBytes: ByteArray): Boolean {
         return runCatching {
             val cf = CertificateFactory.getInstance("X.509")
             val target = cf.generateCertificate(ByteArrayInputStream(certBytes)) as X509Certificate
-            val trustedChain = KeyChain.getCertificateChain(
-                context,
-                target.subjectX500Principal.name
-            )
-            trustedChain != null && trustedChain.isNotEmpty()
+
+            val caStore = KeyStore.getInstance("AndroidCAStore").apply { load(null, null) }
+            caStore.aliases().asSequence().any { alias ->
+                (caStore.getCertificate(alias) as? X509Certificate)?.let { installed ->
+                    installed.encoded.contentEquals(target.encoded)
+                } ?: false
+            }
         }.getOrDefault(false)
     }
 

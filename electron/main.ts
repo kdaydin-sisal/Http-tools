@@ -27,6 +27,7 @@ app.dock?.hide();
 let tray: Tray | null = null;
 let runtime: AppRuntimeHandle | null = null;
 let starting = false;
+let manageSystemProxy = false;
 let appWindow: BrowserWindow | null = null;
 
 const buildTrayIcon = () => {
@@ -78,6 +79,7 @@ const startProxy = async () => {
   updateTray();
   try {
     runtime = await startAppRuntime({
+      manageSystemProxy,
       onError: (error) => {
         console.error("[proxy-error]", error);
       },
@@ -143,6 +145,18 @@ const updateTray = () => {
       label: "Open Onboarding",
       enabled: !!runtime,
       click: () => openUrl("/onboarding"),
+    },
+    { type: "separator" },
+    {
+      label: "Manage Mac System Proxy",
+      type: "checkbox",
+      checked: manageSystemProxy,
+      enabled: !runtime && !starting,
+      toolTip: "When on, this Mac's own HTTP/HTTPS system proxy is pointed at this tool too (affects all Mac apps, not just paired iOS/Android devices). Off by default — use the Android companion app's VPN tunnel or manual device proxy settings instead.",
+      click: () => {
+        manageSystemProxy = !manageSystemProxy;
+        updateTray();
+      },
     },
     { type: "separator" },
     {
