@@ -1,7 +1,8 @@
 import { ensureLocalCa } from "./ca-store.js";
 import { ProxyService } from "./proxy-service.js";
+import { Socks5Shim } from "./socks5-shim.js";
 import { ApiServer } from "../control-plane/api-server.js";
-import { findFreePortPair } from "./port-finder.js";
+import { findFreePortTriplet } from "./port-finder.js";
 import {
   clearSystemProxy,
   getActiveNetworkServiceName,
@@ -15,6 +16,8 @@ import type { TrafficRule } from "./types.js";
 export interface AppRuntimeOptions {
   preferredProxyPort?: number;
   preferredApiPort?: number;
+  /** Port the SOCKS5 shim (for the Android companion app's VPN tunnel) listens on. */
+  preferredSocksPort?: number;
   rules?: TrafficRule[];
   /** When true (default on macOS), automatically point the system HTTP/HTTPS proxy at this tool. */
   manageSystemProxy?: boolean;
@@ -28,6 +31,7 @@ export interface AppRuntimeHandle {
   apiServer: ApiServer;
   proxyPort: number;
   apiPort: number;
+  socksPort: number;
   certPath: string;
   systemProxyManaged: boolean;
   networkServiceName: string | null;
@@ -43,6 +47,7 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
   const {
     preferredProxyPort = 8000,
     preferredApiPort = 8001,
+    preferredSocksPort = 8002,
     rules = [],
     manageSystemProxy = process.platform === "darwin",
     onRequest,
@@ -50,9 +55,9 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
     onError,
   } = options;
 
-  const [ca, { proxyPort, apiPort }] = await Promise.all([
+  const [ca, { proxyPort, apiPort, socksPort }] = await Promise.all([
     ensureLocalCa(),
-    findFreePortPair(preferredProxyPort, preferredApiPort),
+    findFreePortTriplet(preferredProxyPort, preferredApiPort, preferredSocksPort),
   ]);
 
   const proxy = new ProxyService();
@@ -67,7 +72,11 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
     caCertPem: ca.cert,
   });
 
-  const apiServer = new ApiServer(proxy, { certPath: ca.certPath, certPem: ca.cert, apiPort });
+  const socks5Shim = new Socks5Shim();
+  socks5Shim.onError((error) => onError?.(error));
+  await socks5Shim.start({ listenPort: socksPort, upstreamProxyPort: proxyPort });
+
+  const apiServer = new ApiServer(proxy, { certPath: ca.certPath, certPem: ca.cert, apiPort, socksPort });
   await apiServer.start(apiPort);
 
   let networkServiceName: string | null = null;
@@ -105,6 +114,7 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
     }
 
     await apiServer.stop();
+    await socks5Shim.stop();
     await proxy.stop();
   };
 
@@ -113,6 +123,7 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
     apiServer,
     proxyPort,
     apiPort,
+    socksPort,
     certPath: ca.certPath,
     systemProxyManaged,
     networkServiceName,

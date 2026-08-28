@@ -18,7 +18,13 @@ import kotlinx.coroutines.flow.callbackFlow
  * the advertisement so this fallback path is equally secure to the QR path.
  */
 class MdnsDiscovery(private val context: Context) {
-    data class DiscoveredService(val name: String, val host: String, val port: Int, val token: String?)
+    data class DiscoveredService(
+        val name: String,
+        val host: String,
+        val port: Int,
+        val token: String?,
+        val socksPort: Int?
+    )
 
     private val serviceType = "_httptools._tcp"
 
@@ -37,12 +43,14 @@ class MdnsDiscovery(private val context: Context) {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                         val token = serviceInfo.attributes["token"]?.let { String(it) }
+                        val socksPort = serviceInfo.attributes["socksPort"]?.let { String(it).toIntOrNull() }
                         trySend(
                             DiscoveredService(
                                 name = serviceInfo.serviceName,
                                 host = serviceInfo.host?.hostAddress ?: return,
                                 port = serviceInfo.port,
-                                token = token
+                                token = token,
+                                socksPort = socksPort
                             )
                         )
                     }
@@ -60,6 +68,8 @@ class MdnsDiscovery(private val context: Context) {
 
     companion object {
         fun DiscoveredService.toPairingInfo(): PairingInfo? =
-            token?.let { PairingInfo(host = host, port = port, token = it) }
+            if (token != null && socksPort != null) {
+                PairingInfo(host = host, port = port, socksPort = socksPort, token = token)
+            } else null
     }
 }

@@ -5,6 +5,8 @@ import { getMacIp } from "./network-info.js";
 export interface PairingPayload {
   host: string;
   port: number;
+  /** Port of the SOCKS5 shim in front of Mockttp — this is what the companion app's VPN tunnel connects to. */
+  socksPort: number;
   token: string;
   expiresAt: number;
 }
@@ -25,7 +27,10 @@ export class PairingService {
   private bonjour: Bonjour | null = null;
   private publishedService: Service | null = null;
 
-  constructor(private readonly apiPort: number) {}
+  constructor(
+    private readonly apiPort: number,
+    private readonly socksPort: number,
+  ) {}
 
   /** Issues (or reuses, if still valid) a pairing token and republishes mDNS with it. */
   issuePayload(): PairingPayload {
@@ -37,6 +42,7 @@ export class PairingService {
     return {
       host: getMacIp(),
       port: this.apiPort,
+      socksPort: this.socksPort,
       token: this.currentToken,
       expiresAt: this.expiresAt,
     };
@@ -63,7 +69,7 @@ export class PairingService {
       name: "HTTP Tools",
       type: SERVICE_TYPE,
       port: this.apiPort,
-      txt: { token: this.currentToken ?? "" },
+      txt: { token: this.currentToken ?? "", socksPort: String(this.socksPort) },
     });
   }
 }

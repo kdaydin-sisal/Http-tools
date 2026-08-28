@@ -35,9 +35,16 @@ android {
         compose = true
     }
 
-    // Native (JNI) build for the hev-socks5-tunnel engine is wired in once the
-    // vendored source lands under app/src/main/cpp (see companion-vpnservice-relay todo).
-    // Left disabled here to keep the initial scaffold buildable without NDK setup.
+    // Native (JNI) build for the hev-socks5-tunnel engine — vendored as a git
+    // submodule under app/src/main/cpp/hev-socks5-tunnel, which already ships
+    // its own Android.mk/Application.mk (ndk-build), so we point Gradle's
+    // externalNativeBuild at that instead of introducing a separate CMake build.
+    externalNativeBuild {
+        ndkBuild {
+            path = file("src/main/cpp/hev-socks5-tunnel/Android.mk")
+        }
+    }
+    ndkVersion = "30.0.15729638"
 }
 
 dependencies {

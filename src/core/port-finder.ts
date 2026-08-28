@@ -41,3 +41,21 @@ export const findFreePortPair = async (
   const apiPort = await findFreePort(apiCandidate);
   return { proxyPort, apiPort: apiPort === proxyPort ? await findFreePort(apiPort + 1) : apiPort };
 };
+
+/**
+ * Finds a free triplet of ports for the proxy, control API, and the SOCKS5 shim used by the
+ * Android companion app's per-app VPN tunnel, avoiding collisions between all three picks.
+ */
+export const findFreePortTriplet = async (
+  preferredProxyPort: number,
+  preferredApiPort: number,
+  preferredSocksPort: number,
+): Promise<{ proxyPort: number; apiPort: number; socksPort: number }> => {
+  const { proxyPort, apiPort } = await findFreePortPair(preferredProxyPort, preferredApiPort);
+  let socksCandidate = preferredSocksPort;
+  while (socksCandidate === proxyPort || socksCandidate === apiPort) {
+    socksCandidate += 1;
+  }
+  const socksPort = await findFreePort(socksCandidate);
+  return { proxyPort, apiPort, socksPort };
+};

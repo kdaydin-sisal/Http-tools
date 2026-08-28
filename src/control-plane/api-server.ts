@@ -46,7 +46,7 @@ export class ApiServer {
 
   constructor(
     private readonly proxyService: ProxyService,
-    private readonly uiContext: { certPath: string; certPem: string; apiPort: number },
+    private readonly uiContext: { certPath: string; certPem: string; apiPort: number; socksPort: number },
   ) {
     proxyService.onRequest((event) => {
       this.requestEvents.push(event);
@@ -66,7 +66,7 @@ export class ApiServer {
   }
 
   async start(port: number): Promise<void> {
-    this.pairingService = new PairingService(port);
+    this.pairingService = new PairingService(port, this.uiContext.socksPort);
     await new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(port, () => {
