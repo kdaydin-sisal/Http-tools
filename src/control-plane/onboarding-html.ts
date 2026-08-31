@@ -98,6 +98,16 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
       .companion-pairing-info { flex: 1; min-width: 220px; }
       .companion-pairing-info p { margin: 4px 0; font-size: 14px; }
 
+      .trusted-ca-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+      .trusted-ca-item { background: var(--panel-soft); border: 1px solid var(--border); border-radius: 8px;
+                          padding: 10px 14px; display: flex; align-items: center; gap: 12px; }
+      .trusted-ca-info { flex: 1; min-width: 0; }
+      .trusted-ca-name { font-weight: 600; font-size: 13px; }
+      .trusted-ca-meta { color: var(--muted); font-size: 11px; font-family: Menlo, monospace; word-break: break-all; margin-top: 2px; }
+      .trusted-ca-empty { color: var(--muted); font-size: 13px; }
+      .trusted-ca-import { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+      .trusted-ca-error { color: var(--danger); font-size: 12px; margin-top: 8px; }
+
       @media (max-width: 700px) {
         .topbar { flex-direction: column; align-items: flex-start; }
         .device-card { flex-direction: column; }
@@ -138,6 +148,24 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
           </div>
         </div>
         <div class="cert-info" title="CA certificate path">${context.certPath}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">
+          🔒 Trusted CAs (corporate proxy / MITM)
+        </div>
+        <p style="color: var(--muted); font-size: 13px; margin: 0 0 8px;">
+          If your network runs a corporate TLS-inspecting proxy (e.g. Netskope, Zscaler) that
+          re-signs HTTPS traffic with its own certificate, import its root CA here so HTTP
+          Tools can still reach real servers through it. This only affects this app's own
+          outbound connections — nothing else on this Mac or on any device is changed.
+        </p>
+        <div id="trusted-ca-list" class="trusted-ca-list"></div>
+        <div class="trusted-ca-import">
+          <input type="file" id="trusted-ca-file" accept=".pem,.crt,.cer,.der" />
+          <button class="btn btn-primary" id="btn-import-ca" onclick="importTrustedCa()">Import CA Certificate</button>
+        </div>
+        <div id="trusted-ca-error" class="trusted-ca-error"></div>
       </div>
 
       <div class="section">
@@ -371,9 +399,76 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
         }
       }
 
+      function formatCaExpiry(iso) {
+        if (!iso) return '';
+        try {
+          return new Date(iso).toLocaleDateString();
+        } catch { return ''; }
+      }
+
+      async function loadTrustedCas() {
+        const list = document.getElementById('trusted-ca-list');
+        if (!list) return;
+        try {
+          const res = await fetch('/api/trusted-cas');
+          const cas = await res.json();
+          if (!Array.isArray(cas) || cas.length === 0) {
+            list.innerHTML = '<div class="trusted-ca-empty">No additional trusted CAs imported yet.</div>';
+            return;
+          }
+          list.innerHTML = cas.map(ca => \`
+            <div class="trusted-ca-item">
+              <div class="trusted-ca-info">
+                <div class="trusted-ca-name">\${escapeHtml(ca.name)}</div>
+                <div class="trusted-ca-meta">\${escapeHtml(ca.subject)}\${ca.validTo ? ' · expires ' + escapeHtml(formatCaExpiry(ca.validTo)) : ''}</div>
+              </div>
+              <button class="btn btn-danger" onclick="removeTrustedCa('\${escapeAttr(ca.id)}')">Remove</button>
+            </div>
+          \`).join('');
+        } catch {
+          list.innerHTML = '<div class="trusted-ca-empty">Failed to load trusted CAs.</div>';
+        }
+      }
+
+      async function importTrustedCa() {
+        const input = document.getElementById('trusted-ca-file');
+        const errorEl = document.getElementById('trusted-ca-error');
+        errorEl.textContent = '';
+        if (!input || !input.files || input.files.length === 0) {
+          errorEl.textContent = 'Choose a certificate file first.';
+          return;
+        }
+        const file = input.files[0];
+        try {
+          const bytes = await file.arrayBuffer();
+          const res = await fetch('/api/trusted-cas', {
+            method: 'POST',
+            headers: { 'content-type': 'application/octet-stream', 'x-cert-name': encodeURIComponent(file.name) },
+            body: bytes,
+          });
+          const body = await res.json();
+          if (!res.ok) {
+            errorEl.textContent = body.error || 'Failed to import certificate.';
+            return;
+          }
+          input.value = '';
+          await loadTrustedCas();
+        } catch (e) {
+          errorEl.textContent = 'Failed to import certificate: ' + (e && e.message ? e.message : e);
+        }
+      }
+
+      async function removeTrustedCa(id) {
+        try {
+          await fetch('/api/trusted-cas/' + encodeURIComponent(id), { method: 'DELETE' });
+          await loadTrustedCas();
+        } catch { }
+      }
+
       // Initial load
       loadDevices();
       refreshPairingQr();
+      loadTrustedCas();
 
       // Auto-refresh every 8s to catch newly connected/booted devices
       setInterval(loadDevices, 8000);

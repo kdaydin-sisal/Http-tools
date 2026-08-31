@@ -1,4 +1,5 @@
 import { ensureLocalCa } from "./ca-store.js";
+import { TrustedCaStore } from "./trusted-ca-store.js";
 import { ProxyService } from "./proxy-service.js";
 import { Socks5Shim } from "./socks5-shim.js";
 import { ApiServer } from "../control-plane/api-server.js";
@@ -29,6 +30,7 @@ export interface AppRuntimeOptions {
 export interface AppRuntimeHandle {
   proxy: ProxyService;
   apiServer: ApiServer;
+  trustedCaStore: TrustedCaStore;
   proxyPort: number;
   apiPort: number;
   socksPort: number;
@@ -65,6 +67,9 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
     findFreePortTriplet(preferredProxyPort, preferredApiPort, preferredSocksPort),
   ]);
 
+  const trustedCaStore = new TrustedCaStore();
+  const additionalTrustedCAs = await trustedCaStore.getAllPems();
+
   const proxy = new ProxyService();
   proxy.setRules(rules);
   proxy.onError((error) => onError?.(error));
@@ -75,13 +80,14 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
     port: proxyPort,
     caKeyPem: ca.key,
     caCertPem: ca.cert,
+    additionalTrustedCAs,
   });
 
   const socks5Shim = new Socks5Shim();
   socks5Shim.onError((error) => onError?.(error));
   await socks5Shim.start({ listenPort: socksPort, upstreamProxyPort: proxyPort });
 
-  const apiServer = new ApiServer(proxy, { certPath: ca.certPath, certPem: ca.cert, apiPort, socksPort });
+  const apiServer = new ApiServer(proxy, { certPath: ca.certPath, certPem: ca.cert, apiPort, socksPort }, trustedCaStore);
   await apiServer.start(apiPort);
 
   let networkServiceName: string | null = null;
@@ -126,6 +132,7 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
   return {
     proxy,
     apiServer,
+    trustedCaStore,
     proxyPort,
     apiPort,
     socksPort,

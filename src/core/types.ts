@@ -69,4 +69,10 @@ export interface ProxyStartOptions {
   port: number;
   caKeyPem: string;
   caCertPem: string;
+  /**
+   * PEM-encoded CA certificates to additionally trust for the proxy's own outbound
+   * (upstream) connections — needed when the network runs a transparent TLS-inspecting
+   * proxy (e.g. Netskope, Zscaler) that re-signs traffic with its own CA.
+   */
+  additionalTrustedCAs?: string[];
 }

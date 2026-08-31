@@ -40,6 +40,7 @@ export class ProxyService {
   private readonly events = new TypedEmitter();
   private readonly rules = new Map<string, TrafficRule>();
   private proxy: Mockttp | undefined;
+  private additionalTrustedCAs: string[] = [];
 
   onRequest(listener: (event: RequestEvent) => void) {
     this.events.on("request", listener);
@@ -73,6 +74,8 @@ export class ProxyService {
       throw new Error("Proxy already started");
     }
 
+    this.additionalTrustedCAs = options.additionalTrustedCAs ?? [];
+
     this.proxy = getLocal({
       https: {
         key: options.caKeyPem,
@@ -82,6 +85,11 @@ export class ProxyService {
     });
 
     await this.proxy.start(options.port);
+    await this.registerHandlers();
+  }
+
+  private async registerHandlers() {
+    if (!this.proxy) return;
     await this.proxy.on("tls-client-error", async (failure: TlsHandshakeFailure) => {
       this.events.emit("tlsFailure", {
         failureCause: failure.failureCause,
@@ -94,7 +102,25 @@ export class ProxyService {
     await this.proxy.forAnyRequest().thenPassThrough({
       beforeRequest: async (request) => this.handleRequest(request),
       beforeResponse: async (response, request) => this.handleResponse(response, request),
+      additionalTrustedCAs: this.additionalTrustedCAs.map((cert) => ({ cert })),
     });
+  }
+
+  /**
+   * Updates the set of additional CAs trusted for the proxy's own outbound (upstream)
+   * connections — e.g. when the user imports/removes a corporate MITM proxy's root CA
+   * (Netskope, Zscaler, etc.) via the Trusted CAs UI. Applies live without restarting the
+   * whole app: Mockttp's rules are reset and the single always-repeating passthrough rule
+   * is re-registered with the updated CA list.
+   */
+  async reconfigureTrustedCAs(pems: string[]) {
+    if (!this.proxy) {
+      this.additionalTrustedCAs = pems;
+      return;
+    }
+    this.additionalTrustedCAs = pems;
+    this.proxy.reset();
+    await this.registerHandlers();
   }
 
   async stop() {

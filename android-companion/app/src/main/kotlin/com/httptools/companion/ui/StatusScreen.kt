@@ -93,12 +93,21 @@ fun StatusScreen(pairing: PairingInfo, caCertDer: ByteArray?, onPickApps: () -> 
         ) {
             Text("Tunnel active")
             Switch(checked = vpnEnabled, enabled = selectedCount > 0, onCheckedChange = { checked ->
+                android.util.Log.i("StatusScreen", "Switch toggled to $checked")
                 vpnEnabled = checked
                 val serviceIntent = Intent(context, CompanionVpnService::class.java)
                 if (checked) {
                     ContextCompat.startForegroundService(context, serviceIntent)
                 } else {
-                    context.stopService(serviceIntent)
+                    // Don't rely on stopService()+onDestroy(): while the tunnel is
+                    // established, Android's VPN subsystem holds its own binding to
+                    // this service to track the VPN network's lifecycle, so
+                    // stopService() only clears the "started" flag and does NOT
+                    // trigger onDestroy() while that binding is active. Instead,
+                    // explicitly tell the service to tear down the tunnel/tun fd
+                    // itself via a dedicated stop action, which also calls stopSelf().
+                    serviceIntent.action = CompanionVpnService.ACTION_STOP
+                    context.startService(serviceIntent)
                 }
             })
         }

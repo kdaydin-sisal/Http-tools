@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.httptools.companion.MainActivity
 import com.httptools.companion.pairing.PairingStore
@@ -33,6 +34,13 @@ class CompanionVpnService : VpnService() {
 
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "onStartCommand action=${intent?.action} tunFd=${tunFd != null}")
+        if (intent?.action == ACTION_STOP) {
+            Log.i(TAG, "onStartCommand: ACTION_STOP received, tearing down")
+            stopTunnel()
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val selectedApps = SelectedAppsStore(this).load()
         val pairing = PairingStore(this).load()
 
@@ -94,7 +102,7 @@ class CompanionVpnService : VpnService() {
               address: $socksHost
               udp: 'udp'
             misc:
-              log-file: stdout
+              log-file: ${filesDir.absolutePath}/tunnel-debug.log
               log-level: debug
         """.trimIndent()
         val file = File(filesDir, "tunnel-config.yml")
@@ -102,32 +110,36 @@ class CompanionVpnService : VpnService() {
         return file.absolutePath
     }
 
-    override fun onDestroy() {
-        runCatching { TProxyService.TProxyStopService() }
+    private fun stopTunnel() {
+        val stopped = runCatching { TProxyService.TProxyStopService() }.getOrNull()
+        Log.i(TAG, "stopTunnel: TProxyStopService returned $stopped, closing tunFd=${tunFd != null}")
         tunFd?.close()
         tunFd = null
+    }
+
+    override fun onDestroy() {
+        Log.i(TAG, "onDestroy called")
+        stopTunnel()
         super.onDestroy()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.i(TAG, "onTaskRemoved called")
         // Belt-and-suspenders: if the user swipes the app away from recents,
         // tear the tunnel down instead of leaving it (and the foreground
         // notification) running invisibly in the background. The explicit
         // switch-off path already calls stopService(), but this guarantees
         // the tunnel never outlives the app being closed even if that path
         // is missed (e.g. app killed before the toggle handler runs).
-        runCatching { TProxyService.TProxyStopService() }
-        tunFd?.close()
-        tunFd = null
+        stopTunnel()
         stopSelf()
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onRevoke() {
         // User revoked VPN permission from system settings — tear down cleanly.
-        runCatching { TProxyService.TProxyStopService() }
-        tunFd?.close()
-        tunFd = null
+        Log.i(TAG, "onRevoke called")
+        stopTunnel()
         stopSelf()
         super.onRevoke()
     }
@@ -160,6 +172,7 @@ class CompanionVpnService : VpnService() {
     }
 
     companion object {
+        private const val TAG = "CompanionVpnService"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "companion_vpn"
         private const val TUNNEL_IPV4_ADDRESS = "10.111.0.1"

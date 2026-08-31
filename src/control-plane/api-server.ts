@@ -5,6 +5,7 @@ import { ProxyService } from "../core/proxy-service.js";
 import type { RequestEvent, ResponseEvent, TlsFailureEvent, TrafficRule } from "../core/types.js";
 import { DeviceManager, type DevicePlatform } from "../adapters/device-manager.js";
 import { PairingService } from "../core/pairing-service.js";
+import { TrustedCaStore } from "../core/trusted-ca-store.js";
 import { renderDashboardHtml } from "./dashboard-html.js";
 import { renderOnboardingHtml } from "./onboarding-html.js";
 import { renderRulesEditorHtml } from "./rules-editor-html.js";
@@ -22,6 +23,14 @@ const readJsonBody = async <T>(request: IncomingMessage): Promise<T> => {
   }
   const raw = Buffer.concat(chunks).toString("utf8");
   return JSON.parse(raw) as T;
+};
+
+const readRawBody = async (request: IncomingMessage): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 };
 
 const writeJson = (response: ServerResponse, statusCode: number, body: unknown) => {
@@ -49,6 +58,7 @@ export class ApiServer {
   constructor(
     private readonly proxyService: ProxyService,
     private readonly uiContext: { certPath: string; certPem: string; apiPort: number; socksPort: number },
+    private readonly trustedCaStore: TrustedCaStore = new TrustedCaStore(),
   ) {
     proxyService.onRequest((event) => {
       this.requestEvents.push(event);
@@ -265,6 +275,42 @@ export class ApiServer {
         const deviceId = decodeURIComponent(stopMatch[1]);
         const result = await this.deviceManager.stopListening(deviceId);
         writeJson(response, result.ok ? 200 : 500, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/trusted-cas") {
+        writeJson(response, 200, await this.trustedCaStore.list());
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/trusted-cas") {
+        const bytes = await readRawBody(request);
+        if (bytes.length === 0) {
+          writeJson(response, 400, { error: "No certificate data received" });
+          return;
+        }
+        const suggestedName = request.headers["x-cert-name"];
+        try {
+          const record = await this.trustedCaStore.add(
+            bytes,
+            typeof suggestedName === "string" ? decodeURIComponent(suggestedName) : undefined,
+          );
+          await this.proxyService.reconfigureTrustedCAs(await this.trustedCaStore.getAllPems());
+          writeJson(response, 200, record);
+        } catch (error) {
+          writeJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+
+      const trustedCaMatch = request.url?.match(/^\/api\/trusted-cas\/([^/?]+)$/);
+      if (request.method === "DELETE" && trustedCaMatch) {
+        const id = decodeURIComponent(trustedCaMatch[1]);
+        const removed = await this.trustedCaStore.remove(id);
+        if (removed) {
+          await this.proxyService.reconfigureTrustedCAs(await this.trustedCaStore.getAllPems());
+        }
+        writeJson(response, removed ? 200 : 404, { ok: removed });
         return;
       }
 
