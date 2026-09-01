@@ -125,7 +125,8 @@ export class Socks5Shim {
     let host: string;
     try {
       host = await readAddress(client, atyp);
-    } catch {
+    } catch (error) {
+      console.error("[socks5-shim] CONNECT: failed to read destination address:", error);
       client.write(Buffer.from([SOCKS_VERSION, 0x08, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0])); // address type not supported
       client.destroy();
       return;
@@ -138,6 +139,7 @@ export class Socks5Shim {
     try {
       upstream = await connectAndTunnel(upstreamProxyPort, host, port);
     } catch (error) {
+      console.error(`[socks5-shim] CONNECT ${host}:${port} -- upstream tunnel failed:`, error);
       client.write(Buffer.from([SOCKS_VERSION, 0x05, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0])); // connection refused
       client.destroy();
       throw error;
@@ -178,7 +180,10 @@ export class Socks5Shim {
 
     const bindError = await new Promise<Error | undefined>((resolve) => {
       udpSocket.once("error", resolve);
-      udpSocket.bind(0, "127.0.0.1", () => {
+      // Bind on all interfaces, not just loopback: this socket must receive
+      // UDP datagrams sent from the remote Android device over the LAN, not
+      // just from local processes.
+      udpSocket.bind(0, "0.0.0.0", () => {
         udpSocket.removeListener("error", resolve);
         resolve(undefined);
       });
@@ -191,12 +196,23 @@ export class Socks5Shim {
     }
 
     const boundAddress = udpSocket.address();
+    const replyAddress = (client.localAddress || "127.0.0.1").replace("::ffff:", "");
+    const replyAddressBytes = replyAddress
+      .split(".")
+      .map((part) => parseInt(part, 10));
     const reply = Buffer.alloc(10);
     reply[0] = SOCKS_VERSION;
     reply[1] = 0x00; // succeeded
     reply[2] = 0x00; // reserved
     reply[3] = ATYP_IPV4;
-    Buffer.from([127, 0, 0, 1]).copy(reply, 4);
+    // IMPORTANT: this must be an address the SOCKS5 client (the remote
+    // Android device) can actually reach -- not the shim process's own
+    // loopback. hardcoding 127.0.0.1 here previously told the device to send
+    // every UDP datagram (including DNS queries) to itself, which silently
+    // and permanently broke DNS resolution while still replying "succeeded"
+    // to the ASSOCIATE request. client.localAddress is the address the
+    // device already used to reach us over TCP, so it's guaranteed reachable.
+    Buffer.from(replyAddressBytes).copy(reply, 4);
     reply.writeUInt16BE(boundAddress.port, 8);
     client.write(reply);
 

@@ -64,8 +64,18 @@ class CompanionVpnService : VpnService() {
         val builder = Builder()
             .setSession("HTTP Tools Companion")
             .addAddress(TUNNEL_IPV4_ADDRESS, 32)
+            .addAddress(TUNNEL_IPV6_ADDRESS, 128)
             .addRoute("0.0.0.0", 0)
+            // Without an IPv6 default route, VpnService silently drops any IPv6
+            // traffic from tunneled apps instead of passing it through (it has
+            // no matching route once the app is scoped into the VPN) -- this
+            // looked identical to "no captures ever arrive" for apps/OS
+            // components that prefer IPv6 (common with Android's dual-stack
+            // "happy eyeballs" behavior), even though IPv4 DNS-over-UDP kept
+            // working fine.
+            .addRoute("::", 0)
             .addDnsServer("8.8.8.8")
+            .setMtu(TUNNEL_MTU)
 
         selectedApps.forEach { pkg ->
             runCatching { builder.addAllowedApplication(pkg) }
@@ -110,8 +120,9 @@ class CompanionVpnService : VpnService() {
         val config = """
             tunnel:
               name: tun0
-              mtu: 8500
+              mtu: $TUNNEL_MTU
               ipv4: $TUNNEL_IPV4_ADDRESS
+              ipv6: $TUNNEL_IPV6_ADDRESS
             socks5:
               port: $socksPort
               address: $socksHost
@@ -191,6 +202,16 @@ class CompanionVpnService : VpnService() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "companion_vpn"
         private const val TUNNEL_IPV4_ADDRESS = "10.111.0.1"
+        private const val TUNNEL_IPV6_ADDRESS = "fc00::1"
+        // A conservative MTU that fits safely under real-world Wi-Fi/cellular
+        // path MTUs after the SOCKS5/TCP framing overhead added by
+        // hev-socks5-tunnel. The previous 8500 value in the native tunnel's
+        // config never matched what VpnService.Builder actually configured on
+        // the tun interface (setMtu() was never called, so Android used its own
+        // default) -- that mismatch could corrupt or silently drop packets that
+        // exceeded the interface's real MTU, which looked identical to "no
+        // captures ever arrive" despite the VPN being otherwise healthy.
+        private const val TUNNEL_MTU = 1500
         const val ACTION_START = "com.httptools.companion.vpn.START"
         const val ACTION_STOP = "com.httptools.companion.vpn.STOP"
     }
