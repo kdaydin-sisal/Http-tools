@@ -45,6 +45,25 @@
             </intent-filter>
         </activity>
 
+        <!--
+          Needed to hand the CA cert file to Android's system cert-install screen via
+          ACTION_VIEW with a content:// URI. KeyChain.createInstallIntent() with raw
+          cert bytes triggers an unreliable "certificate provided by null, install from
+          Settings" dead-end on some OEM builds (observed on Samsung One UI); writing the
+          cert to a file and using ACTION_VIEW + the CA cert MIME type reliably opens the
+          real "Install CA certificate" screen instead (same one used for browser-downloaded
+          .cer files).
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <service
             android:name=".vpn.CompanionVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"

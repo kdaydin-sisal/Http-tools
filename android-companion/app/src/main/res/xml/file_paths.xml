@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Matches getCacheDir()/certs/ used by CaCertHelper to stage the CA cert file. -->
+    <cache-path name="certs" path="certs/" />
+</paths>

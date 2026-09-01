@@ -60,10 +60,31 @@ fun StatusScreen(pairing: PairingInfo, caCertDer: ByteArray?, onPickApps: () -> 
         if (!certTrusted && caCertDer != null) {
             Button(onClick = {
                 context.startActivity(
-                    CaCertHelper.createInstallIntent(caCertDer).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    CaCertHelper.createInstallIntent(context, caCertDer).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }) {
                 Text("Install Certificate")
+            }
+            // Android 11+ (API 30+) no longer allows apps to trigger the CA install
+            // flow directly to completion — CertInstaller shows a dialog explaining
+            // the cert must be installed from Settings, then the user has to
+            // navigate there themselves (Settings > Security > More security
+            // settings > Encryption & credentials > Install a certificate > CA
+            // certificate). Surface that explicitly and offer a shortcut into
+            // Settings so the user isn't left guessing after tapping "Install
+            // Certificate" above.
+            Text(
+                "On Android 11+, tapping Install Certificate opens a dialog that " +
+                    "then requires finishing the install from Settings > Security > " +
+                    "Encryption & credentials > Install a certificate > CA certificate."
+            )
+            androidx.compose.material3.TextButton(onClick = {
+                context.startActivity(
+                    Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }) {
+                Text("Open Security Settings")
             }
         }
         if (caCertDer == null) {
