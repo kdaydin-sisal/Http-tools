@@ -72,10 +72,25 @@ class CompanionVpnService : VpnService() {
         }
 
         tunFd = builder.establish()
+        Log.i(TAG, "builder.establish() returned tunFd=${tunFd != null}")
+
+        if (tunFd == null) {
+            // establish() returns null if VPN permission isn't granted, or (per
+            // Android's VpnService docs) if another always-on VPN app has locked
+            // out other VPN clients. Surface this loudly since it otherwise fails
+            // silently with no captures and no obvious error to the user.
+            Log.w(TAG, "establish() returned null tunFd -- VPN was not actually created; " +
+                "another VPN (e.g. an MDM/corporate VPN) may be blocking it")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         tunFd?.let { fd ->
             val configPath = writeTunnelConfig(pairing.host, pairing.socksPort)
-            val started = runCatching { TProxyService.TProxyStartService(configPath, fd.fd) }.getOrDefault(false)
+            val startResult = runCatching { TProxyService.TProxyStartService(configPath, fd.fd) }
+            val started = startResult.getOrDefault(false)
+            Log.i(TAG, "TProxyStartService(config=$configPath, fd=${fd.fd}) -> $started " +
+                "(exception=${startResult.exceptionOrNull()})")
             if (!started) {
                 fd.close()
                 tunFd = null

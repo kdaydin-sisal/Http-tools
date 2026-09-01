@@ -112,3 +112,16 @@ does not touch the macOS Keychain or any other app's configuration.
   connects via IPv6 loopback (`::1`) rather than `127.0.0.1` when talking to the
   Mac's proxy ports directly — the companion app's own shim already does this
   correctly, this only matters if you're scripting your own test clients.
+- **Android only allows one active `VpnService` tunnel at a time on a given
+  device.** If the device already has another always-on/active VPN app running
+  (a corporate MDM VPN client, Netskope Client, Zscaler, etc.), our
+  `Builder.establish()` call can be silently blocked by the OS, and the tunnel
+  will not actually route any traffic even though the on-device switch shows
+  "on" and the foreground service stays alive. This is a platform-level
+  constraint, not a bug in this app — the same behavior was confirmed with HTTP
+  Toolkit's own Android tooling on an affected device. Workarounds: temporarily
+  disable/pause the other VPN app while using the companion app's tunnel, or
+  test on a device/profile that doesn't have another VPN client installed. The
+  app now logs `establish() returned null tunFd` in this situation (visible via
+  `adb logcat`) to make the failure mode obvious instead of silently dropping
+  captures.
