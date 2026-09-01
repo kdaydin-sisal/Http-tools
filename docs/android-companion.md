@@ -125,3 +125,16 @@ does not touch the macOS Keychain or any other app's configuration.
   app now logs `establish() returned null tunFd` in this situation (visible via
   `adb logcat`) to make the failure mode obvious instead of silently dropping
   captures.
+- **(Fixed, kept here for context) VPN establishes but zero traffic ever
+  reaches Mockttp.** Previously seen on a clean device (no competing VPN):
+  the tunnel established successfully and DNS-over-UDP worked, but every
+  connection stalled forever and no captures ever appeared. Root-caused to
+  three compounding bugs, all now fixed:
+  1. `VpnService.Builder` never called `setMtu()` (mismatched the native
+     tunnel's configured MTU).
+  2. No IPv6 default route was added to the VPN builder, so any IPv6 traffic
+     from the tunneled app was silently dropped.
+  3. The SOCKS5 shim's UDP ASSOCIATE reply hardcoded its bind address to
+     `127.0.0.1`, telling the remote device to send DNS datagrams to itself
+     instead of back to the Mac — this alone was enough to permanently break
+     DNS resolution for every tunneled connection.
