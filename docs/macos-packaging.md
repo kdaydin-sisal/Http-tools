@@ -1,11 +1,13 @@
 # macOS packaging notes
 
-The Electron menu-bar shell (`electron/`) is implemented and working:
+The Electron desktop shell (`electron/`) is implemented and working:
 `npm run electron:start` runs it in dev mode, `npm run electron:package`
 builds via `electron-builder` (config in `package.json`'s `build` key,
 `appId: com.httptools.mac`). It already:
 
-- Runs as a tray-only app (no dock icon).
+- Runs as a regular foreground app: visible Dock icon, appears in Cmd+Tab,
+  opens its main window automatically on launch. A menu-bar (tray) icon is
+  also available as a convenience for quick Start/Stop/Quit.
 - Bundles the built `dist/` + `dist-electron/` artifacts and `node_modules`.
 - Auto-selects free ports for the proxy/API/SOCKS5 shim if defaults are busy.
 - Manages the macOS system HTTP/HTTPS proxy (`src/core/macos-system-proxy.ts`):

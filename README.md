@@ -7,9 +7,12 @@ for clean-room boundaries).
 
 ## Current status
 
-- Menu-bar (tray) macOS app wrapping a local HTTP(S) intercept proxy
-  ([Mockttp](https://github.com/httptoolkit/mockttp)) — no dock icon, starts/stops
-  from the tray, auto-manages the macOS system proxy on start/stop/quit.
+- Regular foreground macOS app (visible Dock icon, appears in Cmd+Tab)
+  wrapping a local HTTP(S) intercept proxy
+  ([Mockttp](https://github.com/httptoolkit/mockttp)) — opens its main window
+  automatically on launch, auto-manages the macOS system proxy on
+  start/stop/quit, and also offers a menu-bar (tray) icon as a convenience for
+  quick Start/Stop/Quit without switching windows.
 - Local CA generation/persistence, plus support for importing additional
   **trusted CAs** (e.g. a corporate MITM proxy's root, such as Netskope/Zscaler)
   so our proxy's own outbound TLS connections succeed on corporate networks.
@@ -30,17 +33,19 @@ for clean-room boundaries).
 - Minimal control-plane API with SSE event stream, pairing/QR endpoints, and
   trusted-CA management for desktop/companion-app integration.
 
-## Run (menu-bar app)
+## Run (desktop app)
 
 ```bash
 npm install
 npm run electron:start
 ```
 
-This launches the tray app, which starts the proxy (default ports 8000/8001,
-auto-selecting free ports if busy), points the Mac's system HTTP/HTTPS proxy at
-itself, and restores your previous system proxy settings automatically on
-stop/quit or crash recovery.
+This launches the app with a visible Dock icon and main window, starts the
+proxy (default ports 8000/8001, auto-selecting free ports if busy), points the
+Mac's system HTTP/HTTPS proxy at itself, and restores your previous system
+proxy settings automatically on stop/quit or crash recovery. Closing the main
+window keeps the app running in the background (standard macOS app
+behaviour) — use Quit from the Dock/tray menu or Cmd+Q to fully exit.
 
 To package a distributable build:
 
@@ -100,7 +105,8 @@ steps required on real devices.
 - `HTTP_TOOLS_API_PORT` (default: `8001`)
 
 The Electron app auto-selects free ports (including a third port for the
-companion app's SOCKS5 shim) if the defaults are busy — check the tray menu for
+companion app's SOCKS5 shim) if the defaults are busy — check the tray menu or
+main window for
 the ports actually in use.
 
 ## Notes

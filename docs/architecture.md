@@ -32,15 +32,17 @@ This project is an independent implementation of a Mac-first HTTP(S) interceptio
      diagnostics, pairing, trusted-CA management.
    - Server-rendered dashboard, rules editor, and onboarding/pairing pages
      (`src/control-plane/*-html.ts`).
-   - Electron menu-bar shell (`electron/main.ts`): tray-only (no dock icon)
-     wrapper that starts/stops the above, auto-manages the macOS system
-     HTTP/HTTPS proxy, and auto-selects free ports.
+   - Electron desktop shell (`electron/main.ts`): a regular foreground app
+     (visible Dock icon, appears in Cmd+Tab) that starts/stops the above,
+     auto-manages the macOS system HTTP/HTTPS proxy, auto-selects free ports,
+     and opens its main window automatically on launch. Also offers a
+     menu-bar (tray) icon as a convenience.
 
 ## Initial stack decisions
 - Runtime: Node.js 20+
 - Language: TypeScript
 - Proxy engine: Mockttp (MIT)
-- Packaging target: macOS menu-bar app via Electron (`electron-builder`);
+- Packaging target: macOS desktop app via Electron (`electron-builder`);
   signing/notarization not yet complete — see
   [macos-packaging.md](macos-packaging.md).
 - Android companion app: Kotlin, `VpnService` + hev-socks5-tunnel (native

@@ -9,20 +9,24 @@ ensureDevToolsOnPath();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Electron menu-bar (tray) shell around the HTTP Tools proxy.
+ * Electron desktop shell around the HTTP Tools proxy.
  *
  * Responsibilities beyond the plain CLI (src/index.ts):
- *  - Runs as a background/menu-bar app (no dock icon, LSUIElement-style behaviour).
+ *  - Runs as a regular, foreground macOS app: visible Dock icon, appears in
+ *    Cmd+Tab/App Switcher, and opens its main window automatically on launch.
  *  - Auto-selects free ports if 8000/8001 are busy.
  *  - Automatically points the macOS system HTTP/HTTPS proxy at this tool on start,
  *    and restores the previous system proxy settings on stop/quit/crash-recovery.
- *  - Provides a right-click tray menu: Start/Stop, open dashboard/rules/onboarding,
- *    show current ports, Quit.
+ *  - Also provides a menu-bar (tray) icon with a right-click menu (Start/Stop,
+ *    open dashboard/rules/onboarding, Quit) as a convenience — closing the main
+ *    window hides it rather than quitting, matching normal macOS app behaviour
+ *    (use Quit from the tray menu or Dock icon / Cmd+Q to actually exit).
  *  - Guarantees cleanup (system proxy reset + child process termination) on quit,
  *    including unexpected termination signals.
  */
 
-app.dock?.hide();
+const dockIconPath = path.join(__dirname, "assets", "app-icon.png");
+app.dock?.setIcon(nativeImage.createFromPath(dockIconPath));
 
 let tray: Tray | null = null;
 let runtime: AppRuntimeHandle | null = null;
@@ -173,6 +177,20 @@ app.whenReady().then(async () => {
   tray = new Tray(buildTrayIcon());
   updateTray();
   await startProxy();
+  // Regular foreground app: show the main window automatically on launch
+  // instead of staying hidden until opened from the tray.
+  openUrl("/");
+});
+
+app.on("activate", () => {
+  // Clicking the Dock icon when no window is visible should reopen it —
+  // standard macOS app behaviour.
+  if (!appWindow || appWindow.isDestroyed()) {
+    openUrl("/");
+  } else {
+    appWindow.show();
+    appWindow.focus();
+  }
 });
 
 let quitting = false;
@@ -193,7 +211,9 @@ app.on("before-quit", (event) => {
 });
 
 app.on("window-all-closed", () => {
-  // Menu-bar app: no windows to keep open for; do nothing (stay resident).
+  // The proxy keeps running in the background even with the window closed
+  // (standard macOS app behaviour — stay resident until Quit/Cmd+Q); do
+  // nothing here rather than quitting.
 });
 
 process.on("SIGINT", () => void cleanupAndQuit());

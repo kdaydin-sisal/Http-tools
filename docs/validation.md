@@ -12,18 +12,20 @@
    - `curl -x http://127.0.0.1:8000 http://example.com`
    - Confirm request/response events in dashboard at `http://127.0.0.1:8001/`.
 
-## Menu-bar (Electron) app checks
+## Desktop app checks
 1. `npm run electron:start`.
-2. Confirm a tray icon appears with no dock icon, and the tray menu shows
-   Start/Stop, dashboard/rules/onboarding links, and current ports.
+2. Confirm the app appears in the Dock (with a Dock icon) and in Cmd+Tab, and
+   that its main window opens automatically on launch. A tray icon should
+   also appear with a right-click menu (Start/Stop, dashboard/rules/onboarding
+   links, current ports, Quit).
 3. Start the proxy from the tray and confirm the Mac's system HTTP/HTTPS
    proxy (System Settings > Network > Wi-Fi > Details > Proxies, or
    `networksetup -getwebproxy Wi-Fi`) now points at `127.0.0.1:<proxy-port>`.
 4. Stop the proxy (or quit the app) and confirm the system proxy setting is
    fully restored/disabled again — **this is a common source of "my other
    apps lost internet" reports if the tool is killed abruptly instead of quit
-   cleanly; always prefer Stop/Quit from the tray, and if a process is killed
-   directly, manually verify with `networksetup -getwebproxy Wi-Fi` /
+   cleanly; always prefer Stop/Quit from the tray or Dock, and if a process is
+   killed directly, manually verify with `networksetup -getwebproxy Wi-Fi` /
    `-getsecurewebproxy Wi-Fi` afterward.**
 
 ## Android flow checks
