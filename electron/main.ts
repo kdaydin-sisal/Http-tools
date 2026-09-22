@@ -36,9 +36,10 @@ let appWindow: BrowserWindow | null = null;
 
 const buildTrayIcon = () => {
   const iconPath = path.join(__dirname, "assets", "tray-icon.png");
-  const icon = nativeImage.createFromPath(iconPath);
-  icon.setTemplateImage(true);
-  return icon;
+  // Not a template image: the tray icon is now the full-color HTTP Tools
+  // logo, not a monochrome menu-bar glyph, so it should render as-is rather
+  // than being reduced to a black/white silhouette.
+  return nativeImage.createFromPath(iconPath);
 };
 
 const trayTitle = () => {
