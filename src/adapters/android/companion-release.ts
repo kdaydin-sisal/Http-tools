@@ -99,7 +99,9 @@ const downloadAndInspectApk = async (
   url: string,
 ): Promise<{ tmpPath: string; versionName: string; versionCode: number; packageId: string }> => {
   await mkdir(CACHE_DIR, { recursive: true });
-  const tmpPath = path.join(CACHE_DIR, `${RELEASE_ASSET_NAME}.download`);
+  // Must end in ".apk" -- app-info-parser infers the parser to use from the
+  // file extension and rejects anything else (e.g. a ".download" suffix).
+  const tmpPath = path.join(CACHE_DIR, `${RELEASE_ASSET_NAME}.download.apk`);
 
   const response = await fetch(url);
   if (!response.ok || !response.body) {
