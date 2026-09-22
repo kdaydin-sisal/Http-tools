@@ -1,4 +1,5 @@
 import { AndroidAdapter } from "./android/android-adapter.js";
+import { bootstrapCompanionApp } from "./android/companion-bootstrap.js";
 import { IosAdapter } from "./ios/ios-adapter.js";
 import { getMacIp } from "../core/network-info.js";
 
@@ -17,6 +18,14 @@ export interface DiscoveredDevice {
 export interface ActiveListeningSession {
   deviceId: string;
   platform: DevicePlatform;
+  /**
+   * "advanced-global-proxy": the legacy Android ADB global-proxy path (opt-in,
+   * affects the whole device). "ios-manual": the existing iOS simulator/
+   * real-device flow. The companion-app bootstrap never creates a session
+   * here — see `bootstrapAndroidCompanion` — because listening only actually
+   * starts once the phone pairs over the network, independent of ADB.
+   */
+  mode: "advanced-global-proxy" | "ios-manual";
   startedAt: string;
   proxyHost: string;
   proxyPort: number;
@@ -27,6 +36,7 @@ export interface DeviceListResult {
   devices: DiscoveredDevice[];
   warnings: { android?: string; ios?: string };
 }
+
 
 const describeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -89,49 +99,35 @@ export class DeviceManager {
     return { devices, warnings };
   }
 
+  /**
+   * Primary "Listen" action. For iOS this is unchanged (CA install + manual
+   * proxy instructions). For Android, this now bootstraps the companion app
+   * (install/update if needed, then launch) instead of touching the device's
+   * global proxy setting — the companion app handles pairing and per-app
+   * traffic capture itself once the user scans the onboarding page's QR code.
+   *
+   * This does not track an `activeSessions` entry for Android: unlike the
+   * legacy global-proxy path, there's nothing here to "stop" from the Mac
+   * side — pairing/listening state lives in the companion app and the
+   * pairing service, not in an ADB-held device setting.
+   */
   async startListening(deviceId: string, platform: DevicePlatform, proxyPort: number, _controlPort: number, certPem: string, certPath: string): Promise<{ ok: boolean; message: string; requiresManualCertInstall?: boolean }> {
-    if (this.activeSessions.has(deviceId)) {
-      return { ok: true, message: "Already listening on this device." };
-    }
-
     const proxyHost = getMacIp();
 
     if (platform === "android") {
       try {
         await this.androidAdapter.ensureAdbAvailable();
-
-        // For emulators: use reverse tunnel so device can reach host via 10.0.2.2
-        const isEmulator = deviceId.startsWith("emulator-");
-        if (isEmulator) {
-          await this.androidAdapter.createReverseTunnel(deviceId, proxyPort, proxyPort);
-        }
-
-        const effectiveHost = isEmulator ? "10.0.2.2" : proxyHost;
-        await this.androidAdapter.setGlobalHttpProxy(deviceId, { host: effectiveHost, port: proxyPort });
-
-        // Push the cert into Downloads so the user can install it manually in Settings.
-        const trustResult = await this.androidAdapter.prepareCertificateInstall(deviceId, certPem);
-
-        this.activeSessions.set(deviceId, {
-          deviceId,
-          platform: "android",
-          startedAt: new Date().toISOString(),
-          proxyHost: effectiveHost,
-          proxyPort,
-          certInstalled: false,
-        });
-
-        return {
-          ok: true,
-          message: `Proxy configured. CA certificate pushed to ${trustResult.certPushedPath}. In Android Settings, install that file as a CA certificate. If this device already trusts the HTTP Tools CA, you can skip that step.`,
-          requiresManualCertInstall: true,
-        };
+        const result = await bootstrapCompanionApp(this.androidAdapter, deviceId);
+        return { ok: result.ok, message: result.message };
       } catch (error) {
-        return { ok: false, message: `Android setup failed: ${error instanceof Error ? error.message : String(error)}` };
+        return { ok: false, message: `Companion app setup failed: ${error instanceof Error ? error.message : String(error)}` };
       }
     }
 
     if (platform === "ios") {
+      if (this.activeSessions.has(deviceId)) {
+        return { ok: true, message: "Already listening on this device." };
+      }
       try {
         await this.iosAdapter.ensureXcodeToolsAvailable();
         await this.iosAdapter.installCaCertificateOnSimulator(deviceId, certPath);
@@ -139,6 +135,7 @@ export class DeviceManager {
         this.activeSessions.set(deviceId, {
           deviceId,
           platform: "ios",
+          mode: "ios-manual",
           startedAt: new Date().toISOString(),
           proxyHost,
           proxyPort,
@@ -158,13 +155,79 @@ export class DeviceManager {
     return { ok: false, message: `Unknown platform: ${platform}` };
   }
 
+  /**
+   * Advanced/legacy Android path: sets the device's system-wide HTTP proxy via
+   * ADB (`settings put global http_proxy`), affecting every app on the
+   * device, not just the one being debugged. Kept only as an explicit opt-in
+   * for cases where the companion app's VPN can't be used (e.g. another VPN
+   * is already active, or the device is locked down) — it must never be
+   * reachable from the primary "Listen" button. Requires `confirmed: true`
+   * so the caller (API layer) is forced to have shown the risk warning first.
+   */
+  async startAdvancedAndroidProxy(
+    deviceId: string,
+    proxyPort: number,
+    certPem: string,
+    confirmed: boolean,
+  ): Promise<{ ok: boolean; message: string; requiresConfirmation?: boolean; requiresManualCertInstall?: boolean }> {
+    if (!confirmed) {
+      return {
+        ok: false,
+        requiresConfirmation: true,
+        message:
+          "This sets the device's system-wide HTTP proxy via ADB, affecting every app on the device (not just the one " +
+          "you're debugging). If HTTP Tools quits or is killed without clearing it, the device can lose network access " +
+          "until the proxy is cleared manually. Prefer the companion app (Listen button) unless you specifically need this.",
+      };
+    }
+
+    if (this.activeSessions.has(deviceId)) {
+      return { ok: true, message: "Already listening on this device." };
+    }
+
+    const proxyHost = getMacIp();
+    try {
+      await this.androidAdapter.ensureAdbAvailable();
+
+      // For emulators: use reverse tunnel so device can reach host via 10.0.2.2
+      const isEmulator = deviceId.startsWith("emulator-");
+      if (isEmulator) {
+        await this.androidAdapter.createReverseTunnel(deviceId, proxyPort, proxyPort);
+      }
+
+      const effectiveHost = isEmulator ? "10.0.2.2" : proxyHost;
+      await this.androidAdapter.setGlobalHttpProxy(deviceId, { host: effectiveHost, port: proxyPort });
+
+      // Push the cert into Downloads so the user can install it manually in Settings.
+      const trustResult = await this.androidAdapter.prepareCertificateInstall(deviceId, certPem);
+
+      this.activeSessions.set(deviceId, {
+        deviceId,
+        platform: "android",
+        mode: "advanced-global-proxy",
+        startedAt: new Date().toISOString(),
+        proxyHost: effectiveHost,
+        proxyPort,
+        certInstalled: false,
+      });
+
+      return {
+        ok: true,
+        message: `Proxy configured. CA certificate pushed to ${trustResult.certPushedPath}. In Android Settings, install that file as a CA certificate. If this device already trusts the HTTP Tools CA, you can skip that step.`,
+        requiresManualCertInstall: true,
+      };
+    } catch (error) {
+      return { ok: false, message: `Android setup failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   async stopListening(deviceId: string): Promise<{ ok: boolean; message: string }> {
     const session = this.activeSessions.get(deviceId);
     if (!session) {
       return { ok: true, message: "Device was not being listened." };
     }
 
-    if (session.platform === "android") {
+    if (session.mode === "advanced-global-proxy") {
       try {
         await this.androidAdapter.clearGlobalHttpProxy(deviceId);
         const isEmulator = deviceId.startsWith("emulator-");
@@ -180,7 +243,7 @@ export class DeviceManager {
     this.activeSessions.delete(deviceId);
     return {
       ok: true,
-      message: session.platform === "ios"
+      message: session.mode === "ios-manual"
         ? "Session removed. To fully stop, remove the proxy in simulator Wi-Fi settings."
         : "Proxy settings cleared on device.",
     };

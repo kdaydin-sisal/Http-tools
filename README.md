@@ -22,12 +22,17 @@ for clean-room boundaries).
   and Server-Sent Events (`/events`) for future UI integration.
 - **Android companion app** (`android-companion/`): an on-device, per-app
   `VpnService` tunnel that replaces the legacy "set the device's global proxy"
-  workflow — no dangling proxy settings if the Mac disconnects. Pairs with the
-  Mac via QR code or mDNS discovery. See
+  workflow — no dangling proxy settings if the Mac disconnects. Clicking
+  **Listen** on a device in the onboarding page's device list installs/updates
+  it automatically (fetched from this repo's GitHub Releases, ADB push, no
+  Play Store needed — same idea as HTTP Toolkit's own Android delivery) and
+  launches it; pairing then happens via QR code or mDNS discovery. See
   [docs/android-companion.md](docs/android-companion.md).
-- Legacy Android onboarding CLI (ADB discovery, global proxy setup, reverse
-  tunnel, cert install intent) — still available for devices/emulators where
-  the companion app isn't installed.
+- Legacy "Advanced" global-proxy mode for Android — an explicit, always
+  reconfirmed opt-in on the device list for cases where the companion app's
+  VPN can't be used (e.g. another VPN app already active); a standalone CLI
+  version of the same flow is also available for scripting. See
+  [docs/android-companion.md](docs/android-companion.md#advanced-mode-legacy-system-wide-proxy-rarely-needed).
 - iOS onboarding CLI (simulator cert installation + step-by-step real-device
   setup).
 - Minimal control-plane API with SSE event stream, pairing/QR endpoints, and
@@ -71,22 +76,32 @@ path.
 
 ## Android
 
-Two supported ways to route an Android device/emulator through the proxy:
+The onboarding page's device list (`http://localhost:8001/onboarding`) is the
+primary way to connect an Android device or emulator:
 
-1. **Companion app (recommended)** — per-app `VpnService` tunnel, pairs via QR
-   or mDNS, survives Mac disconnects without leaving the device's networking
-   broken. See [docs/android-companion.md](docs/android-companion.md) for
-   build/pairing/CA-trust instructions and known limitations.
-2. **Legacy CLI onboarding** — sets the device's *global* proxy setting
-   directly:
-   ```bash
-   npm run android:onboard -- <device-serial> <your-mac-ip> 8000
-   ```
-   Pushes a DER-encoded `.cer` CA file to the device/emulator, force-restarts
-   CertInstaller, and opens it via a readable `content://` URI. Because this
-   sets a global proxy, if the Mac becomes unreachable (network change, tool
-   quit, etc.) the device's networking will break until the proxy setting is
-   cleared manually — prefer the companion app to avoid this.
+1. **Listen** — installs/updates and launches the companion app automatically
+   (no Play Store, no manual APK transfer), then pair it with the Mac via QR
+   code or mDNS. Per-app `VpnService` tunnel; surviving a Mac disconnect never
+   leaves the device's networking broken. See
+   [docs/android-companion.md](docs/android-companion.md).
+2. **⚠ Advanced** — sets the device's *global* proxy setting directly via ADB,
+   for cases where the companion app's VPN can't be used (most commonly:
+   another VPN app already holds the device's one available `VpnService`
+   slot). Always shows a fresh warning before doing anything — every app on
+   the device is routed through the proxy, not just the one you're testing,
+   and an unclean Mac shutdown can leave the device unable to reach the
+   network until the proxy is cleared manually. Details:
+   [docs/android-companion.md](docs/android-companion.md#advanced-mode-legacy-system-wide-proxy-rarely-needed).
+
+The same Advanced-mode logic is also available as a standalone CLI, useful for
+scripting or CI:
+
+```bash
+npm run android:onboard -- <device-serial> <your-mac-ip> 8000
+```
+
+Pushes a DER-encoded `.cer` CA file to the device/emulator, force-restarts
+CertInstaller, and opens it via a readable `content://` URI.
 
 ## iOS
 

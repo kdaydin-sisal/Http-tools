@@ -21,6 +21,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "app-info-parser": "^1.1.6",
     "bonjour-service": "^1.4.4",
     "mockttp": "^3.16.0",
     "qrcode": "^1.5.4"

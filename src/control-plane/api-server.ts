@@ -270,6 +270,20 @@ export class ApiServer {
         return;
       }
 
+      const startAdvancedMatch = request.url?.match(/^\/api\/devices\/([^/]+)\/start-advanced$/);
+      if (request.method === "POST" && startAdvancedMatch) {
+        const deviceId = decodeURIComponent(startAdvancedMatch[1]);
+        const body = await readJsonBody<{ confirmed?: boolean }>(request).catch(() => ({ confirmed: false }));
+        const result = await this.deviceManager.startAdvancedAndroidProxy(
+          deviceId,
+          this.proxyService.getPort(),
+          this.uiContext.certPem,
+          body.confirmed === true,
+        );
+        writeJson(response, result.ok ? 200 : result.requiresConfirmation ? 409 : 500, result);
+        return;
+      }
+
       const stopMatch = request.url?.match(/^\/api\/devices\/([^/]+)\/stop$/);
       if (request.method === "POST" && stopMatch) {
         const deviceId = decodeURIComponent(stopMatch[1]);

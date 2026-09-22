@@ -20,3 +20,8 @@ export interface AndroidDeviceHealth {
   canSetGlobalProxy: boolean;
   notes: string[];
 }
+
+export interface InstalledPackageVersion {
+  versionCode: number;
+  versionName: string;
+}

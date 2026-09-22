@@ -44,6 +44,8 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
       .btn-danger:hover:not(:disabled) { background: #991b1b; }
       .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
       .btn-ghost:hover:not(:disabled) { color: var(--text); border-color: #64748b; }
+      .btn-advanced { color: #d97706; border-color: #92400e; font-size: 12px; }
+      .btn-advanced:hover:not(:disabled) { color: #f59e0b; border-color: #d97706; }
 
       .device-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
       .device-card { background: var(--panel-soft); border: 1px solid var(--border); border-radius: 8px;
@@ -312,6 +314,13 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
           actionBtn = \`<button class="btn btn-ghost" disabled title="Device not ready">Unavailable</button>\`;
         }
 
+        // Advanced/legacy path: only offered for Android, and only when not
+        // already in an active session (companion Listen doesn't track a
+        // session, so this stays available alongside it — see startDevice).
+        const advancedBtn = (d.platform === 'android' && isReady && !d.isListening)
+          ? \`<button class="btn btn-ghost btn-advanced" onclick="startAdvancedAndroid('\${escapeAttr(d.id)}')" title="Legacy system-wide proxy — affects the whole device">⚠ Advanced</button>\`
+          : '';
+
         const listeningMeta = d.isListening && d.listeningStartedAt
           ? \`<span>Since \${formatTime(d.listeningStartedAt)}</span>\`
           : '';
@@ -328,7 +337,7 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
             <div class="device-meta">\${listeningMeta}</div>
             \${msgHtml}
           </div>
-          <div class="device-actions">\${actionBtn}</div>
+          <div class="device-actions">\${actionBtn}\${advancedBtn}</div>
         </div>\`;
       }
 
@@ -374,6 +383,51 @@ export const renderOnboardingHtml = (context: OnboardingContext) => `<!doctype h
           });
           const data = await res.json();
           actionMessages[deviceId] = { type: data.ok ? 'info' : 'error', text: data.message };
+        } catch (err) {
+          actionMessages[deviceId] = { type: 'error', text: 'Request failed: ' + String(err) };
+        }
+
+        await loadDevices();
+      }
+
+      // Advanced/legacy Android path: sets the device's system-wide HTTP proxy
+      // via ADB. Always shows a fresh risk warning and requires explicit
+      // confirmation before doing anything — this is a deliberate, rare
+      // action, not a shortcut, so we don't remember past confirmations.
+      async function startAdvancedAndroid(deviceId) {
+        try {
+          const warnRes = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/start-advanced', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ confirmed: false }),
+          });
+          const warnData = await warnRes.json();
+          if (!warnData.requiresConfirmation) {
+            // Unexpected — already configured or errored without asking; show whatever we got.
+            actionMessages[deviceId] = { type: warnData.ok ? 'success' : 'error', text: warnData.message };
+            await loadDevices();
+            return;
+          }
+
+          const confirmed = window.confirm(
+            'Advanced (legacy) Android connection:\\n\\n' + warnData.message + '\\n\\nContinue?'
+          );
+          if (!confirmed) return;
+
+          const card = document.getElementById('card-' + deviceId);
+          const btn = card?.querySelector('.btn-advanced');
+          if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Starting…'; }
+
+          const res = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/start-advanced', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ confirmed: true }),
+          });
+          const data = await res.json();
+          actionMessages[deviceId] = {
+            type: data.ok ? (data.requiresManualCertInstall ? 'warn' : 'success') : 'error',
+            text: data.message,
+          };
         } catch (err) {
           actionMessages[deviceId] = { type: 'error', text: 'Request failed: ' + String(err) };
         }

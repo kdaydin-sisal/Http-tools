@@ -41,7 +41,40 @@ Only apps you explicitly select in the in-app picker are included in the VPN's
 per-app UID list; everything else on the device bypasses the tunnel entirely and
 keeps its normal default-route networking.
 
-## Build & install
+## Installing on a device: click "Listen"
+
+There is no Play Store listing or website for this app (it's a personal/internal
+tool), so the desktop app delivers it the same way HTTP Toolkit does: over ADB.
+
+Clicking **Listen** on an Android device in the "Available Devices" list
+(`http://localhost:8001/onboarding`) now does all of this automatically:
+
+1. Checks the device's currently-installed companion app version via
+   `adb shell dumpsys package com.httptools.companion` (if any).
+2. Resolves the latest companion APK — first from this repo's GitHub Releases
+   (asset `http-tools-companion.apk`, see "Publishing a companion release"
+   below), falling back to a locally-built dev APK
+   (`android-companion/app/build/outputs/apk/{debug,release}/...`) if GitHub is
+   unreachable or no release exists yet, and falling back further to a cached
+   copy from a previous successful download (`~/.httptools/companion-apk/`).
+3. Compares `versionCode`: installs if the app is missing, upgrades
+   (`adb install -r`) if a newer `versionCode` is available, or skips
+   straight to launching if the installed version is already current.
+4. Launches the app's `MainActivity` via `adb shell am start`.
+
+This is implemented in `src/adapters/android/companion-release.ts` (resolve/cache)
+and `src/adapters/android/companion-bootstrap.ts` (install/update/launch
+decision), called from `DeviceManager.startListening()`.
+
+Note that clicking Listen does **not** itself start a capture session — it only
+gets the companion app installed and running. Actual traffic capture begins once
+you pair the app with the Mac (below) and start its on-device tunnel switch. The
+device card's "Listening" badge only reflects the legacy Advanced-mode proxy (see
+below); there's currently no live signal back from the companion app's VPN state
+to the device list, so don't be surprised if the badge doesn't flip after Listen —
+check the companion app's own Status screen instead.
+
+### Manual build/install (development)
 
 Requires Android Studio or the command-line Android SDK (API 35, min SDK 26).
 
@@ -52,8 +85,22 @@ cd android-companion
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-There is no release/signed build yet — sideload the debug APK directly (enable
-"Install unknown apps" for whichever source you use, e.g. Files app or `adb install`).
+### Publishing a companion release
+
+For the Listen button's primary (GitHub Releases) path to work, a release with an
+asset literally named `http-tools-companion.apk` must exist on
+[kdaydin-sisal/Http-tools](https://github.com/kdaydin-sisal/Http-tools). Bump
+`versionCode`/`versionName` in `android-companion/app/build.gradle.kts`, then run:
+
+```bash
+scripts/release-companion-apk.sh
+```
+
+This builds `assembleDebug` (debug-signed — this app is only ever sideloaded, so
+there's no benefit to managing a release signing key) and publishes it via the
+GitHub CLI (`gh`, must be installed and authenticated) as a release tagged
+`companion-v<versionName>`. Until the first release is published, Listen falls
+back to the locally-built dev APK path described above.
 
 ## Pairing flow
 
@@ -61,8 +108,9 @@ There is no release/signed build yet — sideload the debug APK directly (enable
    and start the proxy — it displays a pairing QR code containing the Mac's LAN IP,
    API port, SOCKS5 port, and a short-lived pairing token
    (see `GET /api/pairing/qr` in `src/control-plane/api-server.ts`).
-2. On the Android device, open the companion app and grant camera permission when
-   prompted — QR scanning (CameraX + ML Kit) is the primary pairing method.
+2. On the Android device, open the companion app (Listen does this for you) and
+   grant camera permission when prompted — QR scanning (CameraX + ML Kit) is the
+   primary pairing method.
 3. If camera permission is denied or no camera is available, the app falls back to
    an mDNS/NSD device-discovery list — pick the Mac from the list instead of
    scanning.
@@ -103,9 +151,59 @@ Onboarding page ("Trusted CAs" section) or `POST /api/trusted-cas` — this only
 affects our own proxy process's in-memory trust store and is fully reversible; it
 does not touch the macOS Keychain or any other app's configuration.
 
+## Advanced mode: legacy system-wide proxy (rarely needed)
+
+Before the companion app existed, the only way to intercept Android traffic was to
+set the device's global HTTP proxy via ADB (`settings put global http_proxy`) and
+manually install the CA certificate. This still exists as an explicit opt-in,
+separate from the default Listen action, for situations where the companion app's
+VPN can't be used — most commonly when another VPN app (see "Known limitations"
+below) already holds the device's one available `VpnService` slot.
+
+It's accessed via the **⚠ Advanced** button on an Android device card, which is
+deliberately understated and always shows a fresh confirmation dialog before
+doing anything (there's no "don't ask again" — this affects every app on the
+device and is meant to stay a rare, deliberate choice, not a shortcut):
+
+- Sets the device's global HTTP proxy to point at the Mac (or `10.0.2.2` +
+  reverse tunnel for emulators).
+- Pushes the CA certificate to the device's Downloads folder for manual
+  install in Settings.
+- **Every app on the device** is routed through the proxy, not just the one
+  you're testing — unlike the companion app's per-app VPN picker.
+- If HTTP Tools quits or crashes without clearing the proxy (e.g. the Mac
+  sleeps, the process is killed), the device can be left unable to reach the
+  network until the proxy is cleared manually (`adb shell settings put global
+  http_proxy :0`, or Settings → Wi-Fi → network → Edit → Proxy → None).
+
+This is implemented in `DeviceManager.startAdvancedAndroidProxy()`
+(`src/adapters/device-manager.ts`) and the confirmation round-trip lives in the
+`/api/devices/:id/start-advanced` route (`src/control-plane/api-server.ts`): a
+first request without `confirmed: true` returns the warning text without doing
+anything, and the UI shows it in a native `confirm()` dialog before resubmitting
+with `confirmed: true`.
+
+iOS is unaffected by any of this — see "Why isn't there an equivalent for iOS?"
+below.
+
+## Why isn't there an equivalent for iOS?
+
+Short answer: Apple gives third-party (unsigned, non-MDM) apps no programmatic way
+to do it. There is no ADB-equivalent CLI proxy-setting command, and no public API a
+plain desktop tool can call to configure a real device's or simulator's system
+proxy — that capability is restricted to (a) Apple Configuration Profiles, which
+require either manual installation through Settings or a signed MDM/supervision
+relationship, or (b) a signed Network Extension (VPN) app installed via a paid
+Apple Developer Program membership and entitlement, which this project doesn't
+have. That's why `src/adapters/ios/ios-adapter.ts` only automates the CA
+certificate install (`simctl keychain add-root-cert` for simulators) and leaves
+proxy configuration as a manual step in Settings → Wi-Fi → Configure Proxy —
+there's simply no lower-friction path available on iOS today.
+
 ## Known limitations
 
-- No signed/release APK yet (debug build only).
+- No signed/release APK — the companion app is always debug-signed (see
+  "Publishing a companion release" above for why that's intentional here).
 - TLS pinning bypass is out of scope (see `docs/architecture.md` non-goals).
 - If your network's loopback traffic is transparently intercepted by endpoint
   security software (observed with Netskope), make sure any local test tooling

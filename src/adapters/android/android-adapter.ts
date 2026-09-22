@@ -8,6 +8,7 @@ import type {
   AndroidDeviceHealth,
   AndroidProxyConfig,
   AndroidTrustSetupResult,
+  InstalledPackageVersion,
 } from "./types.js";
 
 const parseDeviceState = (rawState: string): AndroidDevice["state"] => {
@@ -143,6 +144,52 @@ export class AndroidAdapter {
         return false;
       }
       throw error;
+    }
+  }
+
+  /**
+   * Returns the installed version of a package on this device, or undefined
+   * if it isn't installed. Uses `dumpsys package` (available without root)
+   * rather than `pm list packages`, since only dumpsys exposes versionCode.
+   */
+  async getInstalledPackageVersion(serial: string, packageId: string): Promise<InstalledPackageVersion | undefined> {
+    let output: string;
+    try {
+      const result = await runCommand("adb", buildAdbTargetArgs(serial, ["shell", "dumpsys", "package", packageId]));
+      output = result.stdout;
+    } catch {
+      // dumpsys still exits 0 even for unknown packages on most builds, so a
+      // command failure here usually means an ADB/device problem, not "not
+      // installed" — but treat it as "not installed" defensively either way.
+      return undefined;
+    }
+
+    const versionCodeMatch = output.match(/versionCode=(\d+)/);
+    const versionNameMatch = output.match(/versionName=([^\s]+)/);
+    if (!versionCodeMatch) return undefined;
+
+    return {
+      versionCode: Number.parseInt(versionCodeMatch[1], 10),
+      versionName: versionNameMatch?.[1] ?? "unknown",
+    };
+  }
+
+  /** Installs (or updates, via -r) an APK on this specific device only. */
+  async installApk(serial: string, apkPath: string): Promise<void> {
+    try {
+      await runCommand("adb", buildAdbTargetArgs(serial, ["install", "-r", apkPath]));
+    } catch (error) {
+      throw new Error(`Failed to install companion app: ${formatCommandFailure(error)}`);
+    }
+  }
+
+  /** Launches an app's main activity on this device via an explicit component name. */
+  async launchApp(serial: string, packageId: string, activity: string): Promise<void> {
+    const component = activity.startsWith(".") ? `${packageId}/${activity}` : activity;
+    try {
+      await runCommand("adb", buildAdbTargetArgs(serial, ["shell", "am", "start", "-n", component]));
+    } catch (error) {
+      throw new Error(`Failed to launch companion app: ${formatCommandFailure(error)}`);
     }
   }
 }
