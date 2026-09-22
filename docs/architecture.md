@@ -12,7 +12,9 @@ This project is an independent implementation of a Mac-first HTTP(S) interceptio
 1. **Core proxy service** (`src/core/proxy-service.ts`)
    - Starts local HTTP(S) intercept proxy (Mockttp).
    - Applies request/response mutation rules (`src/core/rule-engine.ts`).
-   - Emits structured traffic events (captures + SSE).
+   - Emits structured traffic events (captures + SSE), optionally tagged with
+     a `sourceApp` (device id + Android package id) resolved by the SOCKS5
+     shim for per-app capture attribution — see companion app bullet below.
    - Manages local CA (`src/core/ca-store.ts`) and additional imported trusted
      CAs (`src/core/trusted-ca-store.ts`) for outbound TLS to corporate
      MITM-proxied networks.
@@ -26,7 +28,13 @@ This project is an independent implementation of a Mac-first HTTP(S) interceptio
      per-app `VpnService` tunnel on-device that bridges to a SOCKS5 shim on
      the Mac (`src/core/socks5-shim.ts`), which forwards into Mockttp's normal
      HTTP forward-proxy port. Pairs via QR/mDNS (`src/core/pairing-service.ts`).
-     See [android-companion.md](android-companion.md) for full details.
+     The tunnel's vendored native relay is patched to resolve, per TCP
+     connection, which selected app owns it (via Android's
+     `ConnectivityManager.getConnectionOwnerUid()`) and passes that identity to
+     the Mac through the SOCKS5 handshake as a side-channel, enabling
+     per-app capture attribution/filtering in the dashboard even with
+     multiple apps selected at once. See
+     [android-companion.md](android-companion.md) for full details.
 3. **Desktop control plane**
    - HTTP/SSE API server (`src/control-plane/api-server.ts`): captures, rules,
      diagnostics, pairing, trusted-CA management.

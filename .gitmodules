@@ -1,3 +1,0 @@
-[submodule "android-companion/app/src/main/cpp/hev-socks5-tunnel"]
-	path = android-companion/app/src/main/cpp/hev-socks5-tunnel
-	url = https://github.com/heiher/hev-socks5-tunnel

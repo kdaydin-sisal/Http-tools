@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import net, { type Socket } from "node:net";
 import dgram from "node:dgram";
+import type { AppIdentity } from "./types.js";
 
 /**
  * Minimal SOCKS5 server that implements the CONNECT command (proxied through
@@ -45,13 +46,32 @@ const CMD_UDP_ASSOCIATE = 0x03;
 const ATYP_IPV4 = 0x01;
 const ATYP_DOMAIN = 0x03;
 const ATYP_IPV6 = 0x04;
+const AUTH_METHOD_NONE = 0x00;
+const AUTH_METHOD_USERNAME_PASSWORD = 0x02;
+const AUTH_METHOD_NO_ACCEPTABLE = 0xff;
+const USERNAME_PASSWORD_AUTH_VERSION = 0x01;
 
 export class Socks5Shim {
   private readonly events = new EventEmitter();
   private server: net.Server | undefined;
+  /**
+   * Per-app capture attribution (Android only): our patched hev-socks5-tunnel
+   * sends the resolved "<deviceId>|<packageId>" identity as SOCKS5 RFC 1929
+   * username/password auth, once per TCP session. We stash it here keyed by
+   * the *local* port of the loopback socket we open to Mockttp for that
+   * session, since that's the only correlation key ProxyService can see on
+   * its side (via `request.remotePort`, which is Mockttp's view of who
+   * connected to it — i.e. this shim's loopback socket).
+   */
+  private readonly identityByLocalPort = new Map<number, AppIdentity>();
 
   onError(listener: (error: Error) => void) {
     this.events.on("error", listener);
+  }
+
+  /** Looks up the app identity tagged for the loopback connection using this local port, if any. */
+  getAppIdentity(localPort: number): AppIdentity | undefined {
+    return this.identityByLocalPort.get(localPort);
   }
 
   private emitError(error: Error) {
@@ -104,8 +124,22 @@ export class Socks5Shim {
       client.destroy();
       return;
     }
-    await readExactly(client, methodCount); // discard offered auth methods, we only support "no auth"
-    client.write(Buffer.from([SOCKS_VERSION, 0x00])); // 0x00 = no authentication required
+    const offeredMethods = await readExactly(client, methodCount);
+
+    let sourceApp: AppIdentity | undefined;
+    if (offeredMethods.includes(AUTH_METHOD_USERNAME_PASSWORD)) {
+      // Our patched hev-socks5-tunnel offers this method (in addition to "no
+      // auth") only when it has resolved the owning app for this specific
+      // TCP session — negotiate it so we can read that identity below.
+      client.write(Buffer.from([SOCKS_VERSION, AUTH_METHOD_USERNAME_PASSWORD]));
+      sourceApp = await this.readUsernamePasswordAuth(client);
+    } else if (offeredMethods.includes(AUTH_METHOD_NONE)) {
+      client.write(Buffer.from([SOCKS_VERSION, AUTH_METHOD_NONE]));
+    } else {
+      client.write(Buffer.from([SOCKS_VERSION, AUTH_METHOD_NO_ACCEPTABLE]));
+      client.destroy();
+      return;
+    }
 
     // --- Request: VER, CMD, RSV, ATYP, DST.ADDR, DST.PORT ---
     const header = await readExactly(client, 4);
@@ -148,9 +182,15 @@ export class Socks5Shim {
     // Success reply — BND.ADDR/BND.PORT are unused by our client so zero-fill them.
     client.write(Buffer.from([SOCKS_VERSION, 0x00, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]));
 
+    const upstreamLocalPort = upstream.localPort;
+    if (sourceApp && upstreamLocalPort !== undefined) {
+      this.identityByLocalPort.set(upstreamLocalPort, sourceApp);
+    }
+
     client.pipe(upstream);
     upstream.pipe(client);
     const cleanup = () => {
+      if (upstreamLocalPort !== undefined) this.identityByLocalPort.delete(upstreamLocalPort);
       client.destroy();
       upstream.destroy();
     };
@@ -158,6 +198,38 @@ export class Socks5Shim {
     client.on("error", cleanup);
     upstream.on("close", cleanup);
     upstream.on("error", cleanup);
+  }
+
+  /**
+   * Reads an RFC 1929 username/password auth request (VER, ULEN, UNAME,
+   * PLEN, PASSWD) and always replies "success" — this isn't real
+   * authentication, it's a side-channel for our patched hev-socks5-tunnel to
+   * hand us the app identity it resolved for this TCP session. We encode
+   * that identity as `username = deviceId`, `password = packageId`. Any
+   * malformed/unexpected payload is treated as "no identity" rather than a
+   * hard failure, so a stock (unpatched) tunnel or a future protocol
+   * mismatch degrades to untagged captures instead of breaking the tunnel.
+   */
+  private async readUsernamePasswordAuth(client: Socket): Promise<AppIdentity | undefined> {
+    try {
+      const header = await readExactly(client, 2);
+      if (header[0] !== USERNAME_PASSWORD_AUTH_VERSION) {
+        client.write(Buffer.from([USERNAME_PASSWORD_AUTH_VERSION, 0x01]));
+        return undefined;
+      }
+      const uLen = header[1];
+      const username = (await readExactly(client, uLen)).toString("utf8");
+      const pLenByte = await readExactly(client, 1);
+      const password = (await readExactly(client, pLenByte[0])).toString("utf8");
+
+      client.write(Buffer.from([USERNAME_PASSWORD_AUTH_VERSION, 0x00])); // 0x00 = success
+
+      if (!username || !password) return undefined;
+      return { deviceId: username, packageId: password };
+    } catch (error) {
+      console.error("[socks5-shim] failed to read username/password auth:", error);
+      return undefined;
+    }
   }
 
   /**

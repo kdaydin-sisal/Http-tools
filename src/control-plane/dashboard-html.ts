@@ -64,7 +64,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       .card h2 { margin: 0 0 8px; font-size: 18px; }
       .subtle { color: var(--muted); font-size: 12px; line-height: 1.45; }
       .scroll-column { height: calc(100vh - 120px); overflow: auto; }
-      .timeline-controls { display: grid; gap: 8px; grid-template-columns: 1fr 160px; margin: 12px 0; }
+      .timeline-controls { display: grid; gap: 8px; grid-template-columns: 1fr 140px 160px; margin: 12px 0; }
       input, select {
         width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
         background: var(--panel-soft); color: var(--text);
@@ -78,12 +78,19 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       th.status, td.status { width: 70px; }
       th.pin, td.pin { width: 58px; }
       th.rules, td.rules { width: 70px; }
+      th.app, td.app { width: 130px; }
+      .app-badge {
+        display: inline-block; max-width: 100%; padding: 2px 7px; border-radius: 6px;
+        background: rgba(37, 99, 235, 0.18); border: 1px solid rgba(37, 99, 235, 0.4);
+        font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        vertical-align: bottom;
+      }
       tr.capture-row { cursor: pointer; }
       tr.capture-row:hover { background: rgba(255,255,255,0.03); }
       tr.capture-row.selected { background: var(--accent-soft); }
       td.url { white-space: normal; word-break: break-word; line-height: 1.35; }
       .mono { font-family: Menlo, Consolas, monospace; }
-      .summary-grid { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 12px; }
+      .summary-grid { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 12px; }
       .summary-item { border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); padding: 10px; }
       .summary-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
       .summary-value { font-size: 13px; word-break: break-word; }
@@ -171,6 +178,9 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
               <option value="">All methods</option>
               <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
             </select>
+            <select id="appFilter">
+              <option value="">All apps</option>
+            </select>
           </div>
           <div class="timeline-table-wrap">
             <table>
@@ -181,6 +191,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
                   <th class="status">Status</th>
                   <th class="pin">Pin</th>
                   <th class="rules">Rules</th>
+                  <th class="app">App</th>
                   <th>URL</th>
                 </tr>
               </thead>
@@ -263,6 +274,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
         captures: [],
         selectedId: null,
         method: "",
+        app: "",
         search: "",
         pinnedIds: new Set(),
         sectionOpenState: new Map()
@@ -272,6 +284,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       const detailEl = document.getElementById("captureDetail");
       const pinButton = document.getElementById("pinCaptureButton");
       const clearButton = document.getElementById("clearCapturesButton");
+      const appFilterEl = document.getElementById("appFilter");
 
       const escapeHtml = (value) => String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -574,6 +587,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
             '<div class="summary-item"><div class="summary-label">Status</div><div class="summary-value mono">' + escapeHtml(capture.statusCode ?? "Pending") + '</div></div>',
             '<div class="summary-item"><div class="summary-label">Captured At</div><div class="summary-value">' + escapeHtml(new Date(capture.timestamp).toLocaleString()) + '</div></div>',
             '<div class="summary-item"><div class="summary-label">Rules Applied</div><div class="summary-value">' + escapeHtml(String((capture.matchedRuleIds ?? []).length)) + '</div></div>',
+            '<div class="summary-item"><div class="summary-label">Source App</div><div class="summary-value mono">' + escapeHtml(capture.sourceApp?.packageId ?? "Unknown") + '</div></div>',
           '</div>',
           renderSection("URL", '<pre class="payload mono">' + escapeHtml(capture.url ?? "-") + '</pre>'),
           renderSection("Parsed URL", renderUrlParts(capture.url)),
@@ -604,9 +618,40 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
 
       const renderPinnedIndicator = (captureId) => isPinned(captureId) ? '<span class="pin-indicator">★</span>' : '<span class="subtle">-</span>';
 
+      const renderAppBadge = (capture) => {
+        if (!capture.sourceApp) return '<span class="subtle">-</span>';
+        return '<span class="app-badge" title="' + escapeHtml(capture.sourceApp.packageId) + '">' +
+          escapeHtml(capture.sourceApp.packageId) + '</span>';
+      };
+
+      // Populates the app filter dropdown from the distinct apps seen so far, each
+      // annotated with a live capture count, while preserving the current selection
+      // (including a selection that has since scrolled out of the visible captures).
+      const updateAppFilterOptions = () => {
+        const counts = new Map();
+        for (const capture of state.captures) {
+          const packageId = capture.sourceApp?.packageId;
+          if (!packageId) continue;
+          counts.set(packageId, (counts.get(packageId) ?? 0) + 1);
+        }
+
+        const packageIds = [...counts.keys()].sort();
+        const previousValue = appFilterEl.value;
+        appFilterEl.innerHTML = '<option value="">All apps</option>' +
+          packageIds.map((packageId) =>
+            '<option value="' + escapeHtml(packageId) + '">' +
+            escapeHtml(packageId) + ' (' + counts.get(packageId) + ')</option>'
+          ).join("");
+        appFilterEl.value = packageIds.includes(previousValue) ? previousValue : "";
+        state.app = appFilterEl.value;
+      };
+
       const render = () => {
+        updateAppFilterOptions();
+
         const filtered = state.captures
           .filter((capture) => !state.method || capture.method === state.method)
+          .filter((capture) => !state.app || capture.sourceApp?.packageId === state.app)
           .filter((capture) => {
             if (!state.search) return true;
             const text = [
@@ -634,6 +679,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
             '<td class="status mono">' + escapeHtml(capture.statusCode ?? "-") + '</td>' +
             '<td class="pin">' + renderPinnedIndicator(capture.id) + '</td>' +
             '<td class="rules">' + renderTimelineRuleIndicator(capture.matchedRuleIds) + '</td>' +
+            '<td class="app">' + renderAppBadge(capture) + '</td>' +
             '<td class="url mono">' + escapeHtml(capture.url ?? "") + '</td>';
           tr.onclick = () => {
             state.selectedId = capture.id;
@@ -668,7 +714,8 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
           responseHeaders: res.headers,
           responseRawHeaders: res.rawHeaders,
           responseBodyText: res.bodyText,
-          matchedRuleIds: res.matchedRuleIds ?? existing.matchedRuleIds
+          matchedRuleIds: res.matchedRuleIds ?? existing.matchedRuleIds,
+          sourceApp: res.sourceApp ?? existing.sourceApp
         };
         state.requests.set(res.id, merged);
         const index = state.captures.findIndex((capture) => capture.id === res.id);
@@ -682,6 +729,10 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       };
       document.getElementById("methodFilter").onchange = (event) => {
         state.method = event.target.value;
+        render();
+      };
+      appFilterEl.onchange = (event) => {
+        state.app = event.target.value;
         render();
       };
       pinButton.onclick = () => togglePinned(state.selectedId);

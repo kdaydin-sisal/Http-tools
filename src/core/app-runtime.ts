@@ -86,6 +86,7 @@ export const startAppRuntime = async (options: AppRuntimeOptions = {}): Promise<
   const socks5Shim = new Socks5Shim();
   socks5Shim.onError((error) => onError?.(error));
   await socks5Shim.start({ listenPort: socksPort, upstreamProxyPort: proxyPort });
+  proxy.setAppIdentityResolver((remotePort) => socks5Shim.getAppIdentity(remotePort));
 
   const apiServer = new ApiServer(proxy, { certPath: ca.certPath, certPem: ca.cert, apiPort, socksPort }, trustedCaStore);
   await apiServer.start(apiPort);

@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { getLocal, type CompletedRequest, type Mockttp, type TlsHandshakeFailure } from "mockttp";
 import type {
+  AppIdentity,
   ProxyStartOptions,
   RequestEvent,
   ResponseEvent,
@@ -41,6 +42,24 @@ export class ProxyService {
   private readonly rules = new Map<string, TrafficRule>();
   private proxy: Mockttp | undefined;
   private additionalTrustedCAs: string[] = [];
+  /**
+   * Resolves the app that owns a given connection, keyed by the `remotePort`
+   * Mockttp reports for the request (i.e. the local port of the socket that
+   * connected to it — our SOCKS5 shim's loopback socket, for Android VPN
+   * captures). Wired up by app-runtime.ts once the shim is created; left
+   * unset for other capture paths (iOS, Advanced/global-proxy mode), which
+   * simply never get a `sourceApp` tag.
+   */
+  private appIdentityResolver: ((remotePort: number) => AppIdentity | undefined) | undefined;
+
+  setAppIdentityResolver(resolver: (remotePort: number) => AppIdentity | undefined) {
+    this.appIdentityResolver = resolver;
+  }
+
+  private resolveSourceApp(remotePort: number | undefined): AppIdentity | undefined {
+    if (remotePort === undefined || !this.appIdentityResolver) return undefined;
+    return this.appIdentityResolver(remotePort);
+  }
 
   onRequest(listener: (event: RequestEvent) => void) {
     this.events.on("request", listener);
@@ -152,6 +171,7 @@ export class ProxyService {
       bodyText,
       matchedRuleIds: matchingRules.map((rule) => rule.id),
       timestamp: Date.now(),
+      sourceApp: this.resolveSourceApp(request.remotePort),
     });
 
     const staticResponseRule = matchingRules.find((rule) => rule.staticResponse);
@@ -191,6 +211,7 @@ export class ProxyService {
       bodyText: override?.body ?? bodyText,
       matchedRuleIds: matchingRules.map((rule) => rule.id),
       timestamp: Date.now(),
+      sourceApp: this.resolveSourceApp(request.remotePort),
     });
 
     return override;

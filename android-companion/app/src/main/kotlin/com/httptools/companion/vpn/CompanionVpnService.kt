@@ -97,6 +97,11 @@ class CompanionVpnService : VpnService() {
 
         tunFd?.let { fd ->
             val configPath = writeTunnelConfig(pairing.host, pairing.socksPort)
+            // Must happen before TProxyStartService(): the native tunnel calls back
+            // into TProxyService.resolveAppIdentity() (for per-app capture
+            // attribution) as soon as new TCP sessions start arriving, which needs
+            // an application Context to look up ConnectivityManager/PackageManager.
+            TProxyService.init(this)
             val startResult = runCatching { TProxyService.TProxyStartService(configPath, fd.fd) }
             val started = startResult.getOrDefault(false)
             Log.i(TAG, "TProxyStartService(config=$configPath, fd=${fd.fd}) -> $started " +

@@ -51,6 +51,18 @@
    - Note: the device card's "Listening" badge does **not** reflect this —
      it only tracks the Advanced/legacy proxy path (below). Use the
      companion app's own Status screen as the source of truth here.
+7. **Per-app attribution** (Android 10+ devices only): select two or more
+   apps to intercept, start the tunnel, and generate traffic from each app.
+   Confirm:
+   - The dashboard's `App` column shows the correct package id for each
+     capture (not just the first selected app).
+   - The `appFilter` dropdown lists each observed package id with a live
+     count, and selecting one filters the timeline to just that app's
+     captures.
+   - The capture detail view's "Source App" field matches the row's badge.
+   - On a device below API 29 (or if resolution fails for any other reason),
+     captures still appear normally, just without an app badge/filter value —
+     this is the expected graceful-degradation behavior, not a bug.
 
 See [android-companion.md](android-companion.md) for detailed pairing/CA-trust
 steps and known limitations (single-active-VPN constraint, TLS pinning, etc.).

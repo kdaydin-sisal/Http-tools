@@ -126,6 +126,37 @@ installed apps with their package names (distinguishing, for example,
 otherwise show identical display names). Selections persist across app restarts
 (`SelectedAppsStore`) and are applied the next time the tunnel is started.
 
+## Per-app capture attribution
+
+Since Android only allows one active `VpnService` per device, all selected apps
+share the same tunnel session — but the dashboard still shows which app made
+each individual capture, down to the connection level, even when several apps
+are selected and running traffic simultaneously.
+
+This is resolved on the device itself, per TCP connection, not just once per
+VPN session:
+
+1. When the tunnel's native relay (a patched, vendored
+   [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel)) accepts a
+   new TCP connection from a selected app, it calls back into Kotlin
+   (`TProxyService.resolveAppIdentity`), which uses
+   [`ConnectivityManager.getConnectionOwnerUid()`](https://developer.android.com/reference/android/net/ConnectivityManager#getConnectionOwnerUid(int,%20java.net.InetSocketAddress,%20java.net.InetSocketAddress))
+   (Android 10+/API 29+ only) plus `PackageManager` to resolve the owning
+   package for that specific connection's (local, remote) address pair.
+2. That identity (a stable per-install device id plus the resolved package id)
+   is smuggled to the Mac through the existing SOCKS5 handshake as RFC 1929
+   username/password auth — a side-channel, not real authentication — so no
+   new wire protocol or additional round-trip is needed.
+3. The Mac's SOCKS5 shim reads it back off and tags the resulting
+   request/response events with a `sourceApp` field, which the dashboard
+   surfaces as an `App` column, a filter dropdown (with live per-app counts),
+   and a "Source App" field in the capture detail view.
+
+This only applies to Android's VPN-mode companion app tunnel on Android 10+;
+it does not apply to iOS, to the legacy Advanced/global-proxy mode, or to
+devices below API 29 (captures from those simply have no `sourceApp` and
+appear unfiltered/unbadged, exactly as before this feature existed).
+
 ## Trusting the CA certificate
 
 HTTPS interception requires the device to trust the Mac's local CA:

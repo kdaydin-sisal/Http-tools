@@ -20,6 +20,13 @@ for clean-room boundaries).
   Rules Editor.
 - Structured request/response event stream with a Capture Timeline dashboard
   and Server-Sent Events (`/events`) for future UI integration.
+- **Per-app capture attribution (Android)**: when using the companion app's
+  VPN with multiple apps selected at once, every capture is tagged with the
+  exact app that made it (an `App` column, a filter dropdown with live counts,
+  and a "Source App" field in capture detail) — resolved per-TCP-connection on
+  the device itself (via `ConnectivityManager.getConnectionOwnerUid()`, Android
+  10+), not just per VPN session. See
+  [docs/android-companion.md](docs/android-companion.md#per-app-capture-attribution).
 - **Android companion app** (`android-companion/`): an on-device, per-app
   `VpnService` tunnel that replaces the legacy "set the device's global proxy"
   workflow — no dangling proxy settings if the Mac disconnects. Clicking

@@ -24,3 +24,4 @@ android-companion/.idea/
 android-companion/*.iml
 android-companion/captures/
 android-companion/.cxx/
+android-companion/app/.cxx/

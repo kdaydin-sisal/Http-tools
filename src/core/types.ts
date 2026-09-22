@@ -36,6 +36,21 @@ export interface TrafficRule {
   staticResponse?: StaticResponse;
 }
 
+/**
+ * Identifies which app on which device made a captured request. Only
+ * populated for Android traffic captured through the companion app's VPN
+ * tunnel, on TCP connections, on Android 10+ (API 29, required by
+ * `ConnectionManager.getConnectionOwnerUid`) — iOS and Android's Advanced
+ * (global system-proxy) mode have no per-app scoping mechanism at the OS
+ * level, so their captures are left untagged rather than guessed at.
+ */
+export interface AppIdentity {
+  /** Stable per-install identifier for the physical device/emulator, not the app. */
+  deviceId: string;
+  /** The Android package id (e.g. "tr.sisal.millipiyango") that owns the connection. */
+  packageId: string;
+}
+
 export interface RequestEvent {
   id: string;
   method: string;
@@ -45,6 +60,7 @@ export interface RequestEvent {
   matchedRuleIds: string[];
   bodyText?: string;
   timestamp: number;
+  sourceApp?: AppIdentity;
 }
 
 export interface ResponseEvent {
@@ -55,6 +71,7 @@ export interface ResponseEvent {
   matchedRuleIds: string[];
   bodyText?: string;
   timestamp: number;
+  sourceApp?: AppIdentity;
 }
 
 export interface TlsFailureEvent {
