@@ -14,6 +14,23 @@ builds via `electron-builder` (config in `package.json`'s `build` key,
   points it at the running proxy on start, restores the prior settings on
   stop/quit/crash recovery.
 
+## App icon
+
+`electron/assets/app-icon.png`, `app-icon.icns`, and `tray-icon.png` are
+committed, pre-generated files — they are derived from `HttpToolLogo.png`
+(the project's source logo) by `npm run icons:generate`
+(`scripts/generate-app-icon.sh` + `scripts/generate-app-icon.py`), which
+crops/insets/rounds it to match macOS's Dock icon conventions and renders
+every required `.icns` size.
+
+`icons:generate` is **not** run automatically by `electron:start` or
+`electron:package` — it only needs to be run manually after changing
+`HttpToolLogo.png` or the generator scripts, then the regenerated files
+committed. Running it on every package/start was removed because the
+regeneration isn't byte-for-byte reproducible (PNG/`.icns` encoding varies
+slightly run-to-run even with identical input), which produced a spurious
+git diff on those 3 files after every single packaging run.
+
 ## Remaining work to ship a signed/notarized build
 
 1. Add hardened runtime entitlements as required by the app's networking/VPN
