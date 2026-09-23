@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Build
+import android.util.Log
 import java.net.InetSocketAddress
 import java.util.UUID
 
@@ -17,6 +18,7 @@ import java.util.UUID
  * object only exists to satisfy the native library's hardcoded lookup path.
  */
 object TProxyService {
+    private const val TAG = "TProxyService"
     private const val PREFS_NAME = "tproxy_service"
     private const val PREF_DEVICE_ID = "device_id"
 
@@ -69,24 +71,39 @@ object TProxyService {
         remotePort: Int
     ): String {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Log.d(TAG, "resolveAppIdentity: unsupported SDK ${Build.VERSION.SDK_INT}")
             return ""
         }
 
-        val context = appContext ?: return ""
+        val context = appContext ?: run {
+            Log.w(TAG, "resolveAppIdentity: no appContext (init() not called yet?)")
+            return ""
+        }
 
         return try {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                ?: return ""
+                ?: run {
+                    Log.w(TAG, "resolveAppIdentity: no ConnectivityManager")
+                    return ""
+                }
             val uid = cm.getConnectionOwnerUid(
                 protocol,
                 InetSocketAddress(localAddr, localPort),
                 InetSocketAddress(remoteAddr, remotePort)
             )
-            if (uid < 0) return ""
+            if (uid < 0) {
+                Log.d(TAG, "resolveAppIdentity: no owner uid for proto=$protocol local=$localAddr:$localPort remote=$remoteAddr:$remotePort")
+                return ""
+            }
 
-            val packageName = packageNameForUid(context, uid) ?: return ""
+            val packageName = packageNameForUid(context, uid) ?: run {
+                Log.w(TAG, "resolveAppIdentity: uid $uid has no package name")
+                return ""
+            }
+            Log.d(TAG, "resolveAppIdentity: resolved uid=$uid package=$packageName for local=$localAddr:$localPort remote=$remoteAddr:$remotePort")
             "${deviceId(context)}|$packageName"
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "resolveAppIdentity: exception for local=$localAddr:$localPort remote=$remoteAddr:$remotePort", e)
             ""
         }
     }

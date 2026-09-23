@@ -284,13 +284,20 @@ hev_socks5_session_tcp_resolve_identity (HevSocks5SessionTCP *self,
     ipaddr_ntoa_r (&pcb->remote_ip, local_addr, sizeof (local_addr));
     ipaddr_ntoa_r (&pcb->local_ip, remote_addr, sizeof (remote_addr));
 
+    LOG_D ("%p socks5 session tcp resolve identity: app=%s:%u dest=%s:%u",
+          self, local_addr, pcb->remote_port, remote_addr, pcb->local_port);
+
     res = hev_jni_resolve_app_identity (IPPROTO_TCP, local_addr,
                                        pcb->remote_port, remote_addr,
                                        pcb->local_port, &device_id,
                                        &package_id);
-    if (res < 0)
+    if (res < 0) {
+        LOG_D ("%p socks5 session tcp resolve identity: unresolved", self);
         return;
+    }
 
+    LOG_D ("%p socks5 session tcp resolve identity: resolved package=%s",
+          self, package_id);
     self->app_user = device_id;
     self->app_pass = package_id;
 }

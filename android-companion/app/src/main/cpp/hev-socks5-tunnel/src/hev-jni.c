@@ -21,8 +21,8 @@
 #include <hev-memory-allocator.h>
 
 #include "hev-main.h"
-
 #include "hev-jni.h"
+#include "hev-logger.h"
 
 /* clang-format off */
 #ifndef PKGNAME
@@ -50,7 +50,6 @@ static int thread_joinable;
 static JavaVM *java_vm;
 static pthread_t work_thread;
 static pthread_mutex_t mutex;
-static pthread_key_t current_jni_env;
 
 /* Cached across the tunnel's lifetime (set once in JNI_OnLoad) so that
  * hev_jni_resolve_app_identity() -- called per new TCP session, from the
@@ -74,85 +73,102 @@ static JNINativeMethod native_methods[] = {
     { "TProxyGetStats", "()[J", (void *)native_get_stats },
 };
 
-static void
-detach_current_thread (void *env)
-{
-    (*java_vm)->DetachCurrentThread (java_vm);
-}
-
 /*
- * Returns a JNIEnv valid for the calling thread, attaching it to the JVM
- * (and registering a destructor to detach it on thread exit) the first
- * time this is called from that thread. Needed because
- * hev_jni_resolve_app_identity() is called from the tunnel's own native
- * worker thread (started in thread_handler() below), which the JVM knows
- * nothing about until we attach it explicitly.
+ * hev_jni_resolve_app_identity() is invoked from hev-socks5-session-tcp.c's
+ * construct path, which runs as a hev-task coroutine -- a cooperatively
+ * scheduled "green thread" that hev-task-system executes by manually
+ * swapping the CPU stack pointer onto a small, heap-allocated stack (see
+ * _setjmp/_longjmp in hev-task-executer.c, and the raw asm stack switch in
+ * hev-task-execute-*.s), NOT via a normal C function call/return from the
+ * real pthread's own OS-allocated stack.
+ *
+ * ART's JNI implementation tracks "local reference frames" using the
+ * native call stack itself: every JNI entry point validates its frame
+ * against the actual C call chain that reached it. Because a coroutine's
+ * stack is reached via a raw stack-pointer swap rather than a genuine
+ * call chain from an attached thread's real stack, ART's bookkeeping
+ * ends up inconsistent, and *any* JNI call made from that stack --
+ * including a fully valid one -- can be reported as touching an "invalid
+ * JNI transition frame reference" and aborts the whole process
+ * (confirmed on-device via logcat: "JNI DETECTED ERROR IN APPLICATION:
+ * ... jstring is an invalid JNI transition frame reference"). This is
+ * not a stack-*size* problem -- switching to a bigger dedicated stack via
+ * hev_task_call_jump() (an earlier fix attempt) does not help, because
+ * that stack is *also* reached via a raw pointer swap, not a real call
+ * chain.
+ *
+ * Fix: never call into JNI from a hev-task coroutine's stack at all.
+ * Run a small dedicated pthread ("identity thread") that has a normal,
+ * OS-allocated call stack, attaches to the JVM exactly once right after
+ * it starts, and then only ever runs JNI calls from that one place.
+ * hev_jni_resolve_app_identity() (called synchronously from the tunnel's
+ * coroutine) simply hands off the request under a mutex and blocks on a
+ * condition variable for the response.
  */
-static JNIEnv *
-get_jni_env (void)
+static pthread_t identity_thread;
+static pthread_once_t identity_thread_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t identity_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t identity_req_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t identity_res_cond = PTHREAD_COND_INITIALIZER;
+static int identity_req_pending;
+static int identity_res_ready;
+
+/* Request, filled in by hev_jni_resolve_app_identity() under identity_mutex,
+ * read by identity_thread_main() under the same mutex. */
+static int identity_req_protocol;
+static const char *identity_req_local_addr;
+static int identity_req_local_port;
+static const char *identity_req_remote_addr;
+static int identity_req_remote_port;
+
+/* Response, filled in by identity_thread_main() under identity_mutex. */
+static int identity_res_res;
+static char *identity_res_device_id;
+static char *identity_res_package_id;
+
+static void
+identity_resolve_once (JNIEnv *env)
 {
-    JNIEnv *env;
-
-    env = pthread_getspecific (current_jni_env);
-    if (env)
-        return env;
-
-    if ((*java_vm)->GetEnv (java_vm, (void **)&env, JNI_VERSION_1_4) == JNI_OK) {
-        pthread_setspecific (current_jni_env, env);
-        return env;
-    }
-
-    if ((*java_vm)->AttachCurrentThread (java_vm, &env, NULL) != JNI_OK)
-        return NULL;
-
-    pthread_setspecific (current_jni_env, env);
-    return env;
-}
-
-int
-hev_jni_resolve_app_identity (int protocol, const char *local_addr,
-                              int local_port, const char *remote_addr,
-                              int remote_port, char **out_device_id,
-                              char **out_package_id)
-{
-    JNIEnv *env;
     jstring j_local_addr = NULL;
     jstring j_remote_addr = NULL;
     jstring j_result = NULL;
     const char *result_utf = NULL;
     const char *sep;
-    int res = -1;
 
-    *out_device_id = NULL;
-    *out_package_id = NULL;
+    identity_res_res = -1;
+    identity_res_device_id = NULL;
+    identity_res_package_id = NULL;
 
-    if (!service_class || !resolve_identity_method)
-        return -1;
-
-    env = get_jni_env ();
-    if (!env)
-        return -1;
-
-    j_local_addr = (*env)->NewStringUTF (env, local_addr);
-    j_remote_addr = (*env)->NewStringUTF (env, remote_addr);
+    j_local_addr = (*env)->NewStringUTF (env, identity_req_local_addr);
+    j_remote_addr = (*env)->NewStringUTF (env, identity_req_remote_addr);
     if (!j_local_addr || !j_remote_addr)
         goto cleanup;
 
     j_result = (*env)->CallStaticObjectMethod (
-        env, service_class, resolve_identity_method, (jint)protocol,
-        j_local_addr, (jint)local_port, j_remote_addr, (jint)remote_port);
+        env, service_class, resolve_identity_method,
+        (jint)identity_req_protocol, j_local_addr,
+        (jint)identity_req_local_port, j_remote_addr,
+        (jint)identity_req_remote_port);
 
     if ((*env)->ExceptionCheck (env)) {
+        LOG_W ("hev_jni_resolve_app_identity: Kotlin call threw an exception");
         (*env)->ExceptionClear (env);
         goto cleanup;
     }
 
-    if (!j_result)
+    if (!j_result) {
+        LOG_D ("hev_jni_resolve_app_identity: Kotlin returned null");
         goto cleanup;
+    }
 
     result_utf = (*env)->GetStringUTFChars (env, j_result, NULL);
     if (!result_utf)
         goto cleanup;
+
+    LOG_D ("hev_jni_resolve_app_identity: Kotlin returned \"%s\" for "
+          "local=%s:%d remote=%s:%d",
+          result_utf, identity_req_local_addr, identity_req_local_port,
+          identity_req_remote_addr, identity_req_remote_port);
 
     /* Expected wire format from Kotlin: "<deviceId>|<packageId>". */
     sep = strchr (result_utf, '|');
@@ -167,9 +183,9 @@ hev_jni_resolve_app_identity (int protocol, const char *local_addr,
             device_id[device_len] = '\0';
             memcpy (package_id, sep + 1, package_len);
             package_id[package_len] = '\0';
-            *out_device_id = device_id;
-            *out_package_id = package_id;
-            res = 0;
+            identity_res_device_id = device_id;
+            identity_res_package_id = package_id;
+            identity_res_res = 0;
         } else {
             hev_free (device_id);
             hev_free (package_id);
@@ -185,6 +201,78 @@ cleanup:
         (*env)->DeleteLocalRef (env, j_remote_addr);
     if (j_result)
         (*env)->DeleteLocalRef (env, j_result);
+}
+
+static void *
+identity_thread_main (void *data)
+{
+    JNIEnv *env = NULL;
+
+    if ((*java_vm)->AttachCurrentThread (java_vm, &env, NULL) != JNI_OK) {
+        LOG_E ("identity_thread_main: failed to attach JVM");
+        return NULL;
+    }
+
+    pthread_mutex_lock (&identity_mutex);
+    for (;;) {
+        while (!identity_req_pending)
+            pthread_cond_wait (&identity_req_cond, &identity_mutex);
+
+        identity_resolve_once (env);
+
+        identity_req_pending = 0;
+        identity_res_ready = 1;
+        pthread_cond_signal (&identity_res_cond);
+    }
+    pthread_mutex_unlock (&identity_mutex);
+
+    return NULL;
+}
+
+static void
+identity_thread_start (void)
+{
+    pthread_create (&identity_thread, NULL, identity_thread_main, NULL);
+}
+
+int
+hev_jni_resolve_app_identity (int protocol, const char *local_addr,
+                              int local_port, const char *remote_addr,
+                              int remote_port, char **out_device_id,
+                              char **out_package_id)
+{
+    int res;
+
+    *out_device_id = NULL;
+    *out_package_id = NULL;
+
+    if (!service_class || !resolve_identity_method) {
+        LOG_W ("hev_jni_resolve_app_identity: service_class/method not cached "
+              "(JNI_OnLoad lookup failed?)");
+        return -1;
+    }
+
+    pthread_once (&identity_thread_once, identity_thread_start);
+
+    pthread_mutex_lock (&identity_mutex);
+
+    identity_req_protocol = protocol;
+    identity_req_local_addr = local_addr;
+    identity_req_local_port = local_port;
+    identity_req_remote_addr = remote_addr;
+    identity_req_remote_port = remote_port;
+    identity_req_pending = 1;
+    identity_res_ready = 0;
+    pthread_cond_signal (&identity_req_cond);
+
+    while (!identity_res_ready)
+        pthread_cond_wait (&identity_res_cond, &identity_mutex);
+
+    res = identity_res_res;
+    *out_device_id = identity_res_device_id;
+    *out_package_id = identity_res_package_id;
+
+    pthread_mutex_unlock (&identity_mutex);
 
     return res;
 }
@@ -202,8 +290,10 @@ JNI_OnLoad (JavaVM *vm, void *reserved)
         return JNI_ERR;
 
     klass = (*env)->FindClass (env, STR (PKGNAME) "/" STR (CLSNAME));
-    if (!klass)
+    if (!klass) {
+        LOG_E ("JNI_OnLoad: FindClass(" STR (PKGNAME) "/" STR (CLSNAME) ") failed");
         return JNI_ERR;
+    }
     res = (*env)->RegisterNatives (env, klass, native_methods,
                                    N_ELEMENTS (native_methods));
     if (res == 0) {
@@ -214,14 +304,17 @@ JNI_OnLoad (JavaVM *vm, void *reserved)
         // Non-fatal if missing (e.g. an older companion app build without
         // this method) -- hev_jni_resolve_app_identity() checks both are
         // set before ever calling in, so captures simply stay untagged.
-        if (!resolve_identity_method)
+        if (!resolve_identity_method) {
+            LOG_W ("JNI_OnLoad: resolveAppIdentity method not found");
             (*env)->ExceptionClear (env);
+        } else {
+            LOG_I ("JNI_OnLoad: resolveAppIdentity method cached OK");
+        }
     }
     (*env)->DeleteLocalRef (env, klass);
     if (res < 0)
         return JNI_ERR;
 
-    pthread_key_create (&current_jni_env, detach_current_thread);
     pthread_mutex_init (&mutex, NULL);
 
     return JNI_VERSION_1_4;
@@ -232,6 +325,12 @@ thread_handler (void *data)
 {
     ThreadData *tdata = data;
 
+    /* No JNI is attached/used on this thread: all JNI calls now happen
+     * exclusively on the dedicated identity_thread (see
+     * hev_jni_resolve_app_identity() above), which has its own normal,
+     * OS-allocated call stack rather than one of hev-task-system's
+     * coroutine stacks. See the large comment above
+     * identity_resolve_once() for why that separation is required. */
     hev_socks5_tunnel_main (tdata->path, tdata->fd);
 
     atomic_store_explicit (&is_running, 0, memory_order_release);
