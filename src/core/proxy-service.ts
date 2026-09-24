@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import { getLocal, type CompletedRequest, type Mockttp, type TlsHandshakeFailure } from "mockttp";
 import type {
   AppIdentity,
@@ -111,11 +112,13 @@ export class ProxyService {
     if (!this.proxy) return;
     await this.proxy.on("tls-client-error", async (failure: TlsHandshakeFailure) => {
       this.events.emit("tlsFailure", {
+        id: randomUUID(),
         failureCause: failure.failureCause,
         hostname: failure.hostname,
         remoteIpAddress: failure.remoteIpAddress,
         remotePort: failure.remotePort,
         timestamp: Date.now(),
+        sourceApp: this.resolveSourceApp(failure.remotePort),
       });
     });
     await this.proxy.forAnyRequest().thenPassThrough({

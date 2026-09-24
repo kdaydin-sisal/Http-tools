@@ -1,3 +1,7 @@
 <resources>
-    <style name="Theme.HttpToolsCompanion" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.HttpToolsCompanion" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Avoids a white flash before Compose's dark theme paints; matches
+             the app's HttpToolsTheme background color (ui/theme/Theme.kt). -->
+        <item name="android:windowBackground">#0F172A</item>
+    </style>
 </resources>

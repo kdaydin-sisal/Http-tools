@@ -88,6 +88,19 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       tr.capture-row { cursor: pointer; }
       tr.capture-row:hover { background: rgba(255,255,255,0.03); }
       tr.capture-row.selected { background: var(--accent-soft); }
+      tr.capture-row.tls-failure-row { background: rgba(239, 68, 68, 0.07); }
+      tr.capture-row.tls-failure-row:hover { background: rgba(239, 68, 68, 0.13); }
+      tr.capture-row.tls-failure-row.selected { background: rgba(239, 68, 68, 0.22); }
+      .status-badge {
+        display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 11px; white-space: nowrap;
+        background: rgba(239, 68, 68, 0.18); border: 1px solid rgba(239, 68, 68, 0.4); color: #fecaca;
+      }
+      .empty-state {
+        margin: 12px 0; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border);
+        background: var(--panel-soft); color: var(--muted); font-size: 13px; line-height: 1.5;
+      }
+      .empty-state.warning { border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.08); color: #fde68a; }
+      .empty-state strong { color: var(--text); }
       td.url { white-space: normal; word-break: break-word; line-height: 1.35; }
       .mono { font-family: Menlo, Consolas, monospace; }
       .summary-grid { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 12px; }
@@ -182,6 +195,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
               <option value="">All apps</option>
             </select>
           </div>
+          <div id="timelineEmptyState" style="display:none;"></div>
           <div class="timeline-table-wrap">
             <table>
               <thead>
@@ -394,7 +408,16 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       };
 
       const openRowContextMenu = (event, capture) => {
-        const items = [
+        const failure = capture.kind === "tls-failure";
+        const items = failure
+          ? [
+              { label: "Copy Hostname", action: () => copyToClipboard(capture.hostname ?? "") },
+              { label: "Export Failure as JSON", action: () => downloadJson("tls-failure-" + capture.id + ".json", capture) },
+              { separator: true },
+              { label: isPinned(capture.id) ? "Unpin Capture" : "Pin Capture", action: () => togglePinned(capture.id) },
+              { label: "Remove This Entry", action: () => removeCapture(capture.id), danger: true }
+            ]
+          : [
           { label: "Copy URL", action: () => copyToClipboard(capture.url ?? "") },
           { label: "Copy as cURL", action: () => copyToClipboard(buildCurlCommand(capture)) },
           { label: "Copy Response Body", action: () => copyToClipboard(capture.responseBodyText ?? ""), disabled: !capture.responseBodyText },
@@ -580,6 +603,37 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
           return;
         }
 
+        if (capture.kind === "tls-failure") {
+          const scrollTop = detailEl.scrollTop;
+          detailEl.innerHTML = [
+            '<div class="summary-grid">',
+              '<div class="summary-item"><div class="summary-label">Type</div><div class="summary-value mono">TLS Handshake Failure</div></div>',
+              '<div class="summary-item"><div class="summary-label">Failure Cause</div><div class="summary-value mono">' + escapeHtml(capture.failureCause ?? "unknown") + '</div></div>',
+              '<div class="summary-item"><div class="summary-label">Captured At</div><div class="summary-value">' + escapeHtml(new Date(capture.timestamp).toLocaleString()) + '</div></div>',
+              '<div class="summary-item"><div class="summary-label">Hostname</div><div class="summary-value mono">' + escapeHtml(capture.hostname ?? "Unknown") + '</div></div>',
+              '<div class="summary-item"><div class="summary-label">Source App</div><div class="summary-value mono">' + escapeHtml(capture.sourceApp?.packageId ?? "Unknown") + '</div></div>',
+            '</div>',
+            renderSection("What does this mean?", '<div class="subtle">' +
+              'The TLS handshake for this connection never completed, so no HTTP request/response could be captured or decrypted. Common causes:' +
+              '<ul style="margin:8px 0 0 18px; padding:0;">' +
+              '<li><strong>cert-rejected</strong>: the app validated the certificate chain itself (certificate/public-key pinning) and refused our proxy CA.</li>' +
+              '<li><strong>closed</strong> / <strong>reset</strong>: the client or server closed the connection before or during the handshake.</li>' +
+              '<li><strong>no-shared-cipher</strong>: the client and this proxy could not agree on a TLS cipher suite.</li>' +
+              '<li><strong>handshake-timeout</strong>: the handshake did not complete in time.</li>' +
+              '</ul>' +
+              'This is not a bug in HTTP Tools \u2014 it means the app is actively rejecting interception for this connection, and its traffic cannot be shown here.' +
+              '</div>'),
+            renderSection("Connection Details", '<table class="kv-table"><tbody>' +
+              '<tr><td class="mono">Hostname</td><td class="mono">' + escapeHtml(capture.hostname ?? "Unknown") + '</td></tr>' +
+              '<tr><td class="mono">Remote IP</td><td class="mono">' + escapeHtml(capture.remoteIpAddress ?? "Unknown") + '</td></tr>' +
+              '<tr><td class="mono">Remote Port</td><td class="mono">' + escapeHtml(capture.remotePort ?? "Unknown") + '</td></tr>' +
+              '</tbody></table>')
+          ].join("");
+          detailEl.scrollTop = scrollTop;
+          updatePinButton();
+          return;
+        }
+
         const scrollTop = detailEl.scrollTop;
         detailEl.innerHTML = [
           '<div class="summary-grid">',
@@ -649,14 +703,19 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       const render = () => {
         updateAppFilterOptions();
 
-        const filtered = state.captures
-          .filter((capture) => !state.method || capture.method === state.method)
-          .filter((capture) => !state.app || capture.sourceApp?.packageId === state.app)
+        const isTlsFailure = (capture) => capture.kind === "tls-failure";
+
+        const appScoped = state.captures.filter((capture) => !state.app || capture.sourceApp?.packageId === state.app);
+
+        const filtered = appScoped
+          .filter((capture) => !state.method || (!isTlsFailure(capture) && capture.method === state.method))
           .filter((capture) => {
             if (!state.search) return true;
             const text = [
               capture.method,
               capture.url,
+              capture.hostname,
+              capture.failureCause,
               String(capture.statusCode ?? ""),
               ...(capture.matchedRuleIds ?? [])
             ].join(" ").toLowerCase();
@@ -669,18 +728,50 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
             return b.timestamp - a.timestamp;
           });
 
+        const emptyStateEl = document.getElementById("timelineEmptyState");
+        let noticeHtml = "";
+        if (state.captures.length === 0) {
+          noticeHtml = '<div class="empty-state"><strong>Waiting for traffic.</strong> ' +
+            'Make sure a device is paired, the tunnel/proxy is active, and the app you want to inspect is generating network requests.</div>';
+        } else {
+          const failuresOnlyInScope = appScoped.length > 0 && appScoped.every(isTlsFailure);
+          if (failuresOnlyInScope) {
+            const causes = [...new Set(appScoped.map((capture) => capture.failureCause))].join(", ");
+            const scopeLabel = state.app ? "\\"" + state.app + "\\"" : "the selected scope";
+            noticeHtml = '<div class="empty-state warning"><strong>' + escapeHtml(String(appScoped.length)) +
+              ' connection(s) from ' + escapeHtml(scopeLabel) + ' failed the TLS handshake</strong> (' + escapeHtml(causes) + '). ' +
+              'This usually means the app enforces certificate pinning or rejects our proxy CA, so its HTTPS traffic can\\'t be decrypted here \u2014 it is not a connection problem with HTTP Tools. ' +
+              (filtered.length === 0
+                ? 'These are currently hidden by your method/search filter; clear them to see the failed connections below.'
+                : 'The failed connections are listed below for reference.') +
+              '</div>';
+          } else if (filtered.length === 0) {
+            noticeHtml = '<div class="empty-state">No captures match your current filters. Try clearing the search box, method filter, or app filter.</div>';
+          }
+        }
+        emptyStateEl.innerHTML = noticeHtml;
+        emptyStateEl.style.display = noticeHtml ? "block" : "none";
+
         rowsEl.innerHTML = "";
         for (const capture of filtered) {
           const tr = document.createElement("tr");
-          tr.className = "capture-row" + (capture.id === state.selectedId ? " selected" : "");
+          const failure = isTlsFailure(capture);
+          tr.className = "capture-row" + (failure ? " tls-failure-row" : "") + (capture.id === state.selectedId ? " selected" : "");
+          const methodCell = failure ? '<span class="status-badge">TLS</span>' : escapeHtml(capture.method ?? "-");
+          const statusCell = failure
+            ? '<span class="status-badge" title="TLS handshake failure">' + escapeHtml(capture.failureCause ?? "failed") + '</span>'
+            : escapeHtml(capture.statusCode ?? "-");
+          const urlCell = failure
+            ? escapeHtml((capture.hostname ?? capture.remoteIpAddress ?? "(unknown host)") + (capture.remotePort ? ":" + capture.remotePort : ""))
+            : escapeHtml(capture.url ?? "");
           tr.innerHTML =
             '<td class="time">' + escapeHtml(new Date(capture.timestamp).toLocaleTimeString()) + '</td>' +
-            '<td class="method mono">' + escapeHtml(capture.method ?? "-") + '</td>' +
-            '<td class="status mono">' + escapeHtml(capture.statusCode ?? "-") + '</td>' +
+            '<td class="method mono">' + methodCell + '</td>' +
+            '<td class="status mono">' + statusCell + '</td>' +
             '<td class="pin">' + renderPinnedIndicator(capture.id) + '</td>' +
-            '<td class="rules">' + renderTimelineRuleIndicator(capture.matchedRuleIds) + '</td>' +
+            '<td class="rules">' + (failure ? '<span class="pill none">-</span>' : renderTimelineRuleIndicator(capture.matchedRuleIds)) + '</td>' +
             '<td class="app">' + renderAppBadge(capture) + '</td>' +
-            '<td class="url mono">' + escapeHtml(capture.url ?? "") + '</td>';
+            '<td class="url mono">' + urlCell + '</td>';
           tr.onclick = () => {
             state.selectedId = capture.id;
             render();
@@ -702,6 +793,14 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
         const merged = { ...existing, ...req };
         state.requests.set(req.id, merged);
         const index = state.captures.findIndex((capture) => capture.id === req.id);
+        if (index >= 0) state.captures[index] = merged;
+        else state.captures.push(merged);
+      };
+
+      const mergeTlsFailure = (failure) => {
+        const merged = { ...failure, kind: "tls-failure" };
+        state.requests.set(merged.id, merged);
+        const index = state.captures.findIndex((capture) => capture.id === merged.id);
         if (index >= 0) state.captures[index] = merged;
         else state.captures.push(merged);
       };
@@ -768,6 +867,7 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
         const data = await response.json();
         data.requests.forEach(mergeRequest);
         data.responses.forEach(mergeResponse);
+        (data.tlsFailures ?? []).forEach(mergeTlsFailure);
         render();
       };
 
@@ -780,6 +880,11 @@ export const renderDashboardHtml = (_context: DashboardContext) => `<!doctype ht
       events.addEventListener("response", (message) => {
         const event = JSON.parse(message.data);
         mergeResponse(event.payload);
+        render();
+      });
+      events.addEventListener("tls-failure", (message) => {
+        const event = JSON.parse(message.data);
+        mergeTlsFailure(event.payload);
         render();
       });
 

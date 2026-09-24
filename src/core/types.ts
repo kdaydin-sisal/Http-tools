@@ -75,11 +75,13 @@ export interface ResponseEvent {
 }
 
 export interface TlsFailureEvent {
+  id: string;
   failureCause: string;
   hostname?: string;
   remoteIpAddress?: string;
   remotePort?: number;
   timestamp: number;
+  sourceApp?: AppIdentity;
 }
 
 export interface ProxyStartOptions {

@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +26,7 @@ import com.httptools.companion.pairing.PairingScreen
 import com.httptools.companion.pairing.PairingStore
 import com.httptools.companion.ui.AppPickerScreen
 import com.httptools.companion.ui.StatusScreen
+import com.httptools.companion.ui.theme.HttpToolsTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -46,29 +49,36 @@ class MainActivity : ComponentActivity() {
             var pairing by remember { mutableStateOf(pairingStore.load()) }
             val navController = rememberNavController()
 
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-            ) {
-                NavHost(navController = navController, startDestination = "pairing") {
-                    composable("pairing") {
-                        if (pairing != null && pairing?.isExpired == false) {
-                            StatusRoute(pairing!!, navController)
-                        } else {
-                            PairingScreen(onPaired = { info: PairingInfo ->
-                                pairingStore.save(info)
-                                pairing = info
-                                navController.navigate("status") { popUpTo("pairing") { inclusive = true } }
-                            })
+            HttpToolsTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                ) {
+                    NavHost(navController = navController, startDestination = "pairing") {
+                        composable("pairing") {
+                            if (pairing != null && pairing?.isExpired == false) {
+                                StatusRoute(pairing!!, navController)
+                            } else {
+                                PairingScreen(onPaired = { info: PairingInfo ->
+                                    pairingStore.save(info)
+                                    pairing = info
+                                    navController.navigate("status") { popUpTo("pairing") { inclusive = true } }
+                                })
+                            }
+                        }
+                        composable("status") {
+                            pairing?.let { StatusRoute(it, navController) }
+                        }
+                        composable("apps") {
+                            AppPickerScreen(onDone = { navController.popBackStack() })
                         }
                     }
-                    composable("status") {
-                        pairing?.let { StatusRoute(it, navController) }
-                    }
-                    composable("apps") {
-                        AppPickerScreen(onDone = { navController.popBackStack() })
-                    }
+                }
                 }
             }
         }

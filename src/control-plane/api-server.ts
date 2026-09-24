@@ -183,6 +183,7 @@ export class ApiServer {
         writeJson(response, 200, {
           requests: this.requestEvents,
           responses: this.responseEvents,
+          tlsFailures: this.tlsFailureEvents,
         });
         return;
       }
@@ -192,6 +193,7 @@ export class ApiServer {
         const keepIds = new Set(body.keepIds ?? []);
         this.requestEvents.splice(0, this.requestEvents.length, ...this.requestEvents.filter((event) => keepIds.has(event.id)));
         this.responseEvents.splice(0, this.responseEvents.length, ...this.responseEvents.filter((event) => keepIds.has(event.id)));
+        this.tlsFailureEvents.splice(0, this.tlsFailureEvents.length, ...this.tlsFailureEvents.filter((event) => keepIds.has(event.id)));
         writeJson(response, 200, { ok: true, remaining: this.requestEvents.length });
         return;
       }
